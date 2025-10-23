@@ -1,0 +1,11 @@
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+html, body, #root {
+  height: 100%;
+  width: 100%;
+  margin: 0;
+  /* aplica el fondo y color de texto de Tailwind para eliminar las franjas blancas */
+  @apply bg-gray-950 text-gray-100;
+}
