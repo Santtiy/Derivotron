@@ -10,9 +10,16 @@ import { OptimizationCalculator } from "@/components/optimization-calculator"
 import { IntegrationCalculator } from "@/components/integration-calculator"
 import { LimitsCalculator } from "@/components/limits-calculator"
 import { Calculator, TrendingUp, Maximize2, Layers, Sigma } from "lucide-react"
+import { Toaster } from "sonner"
 
 export function CalculatorLayout() {
+  // Estado de la función
   const [functionExpr, setFunctionExpr] = useState("sin(x) * cos(y)")
+
+  // Estado del punto de evaluación (para el módulo de límites)
+  const [limitPoint, setLimitPoint] = useState<{ x: number; y: number } | null>(
+    null
+  )
 
   return (
     <div className="h-screen w-screen bg-gray-950 text-gray-100 p-6">
@@ -35,7 +42,10 @@ export function CalculatorLayout() {
         <div className="space-y-6">
           <Card className="p-6 bg-gray-900 border-gray-800">
             <h2 className="text-lg font-semibold mb-3">Visualización 3D</h2>
-            <SurfaceVisualizer functionExpr={functionExpr} />
+            <SurfaceVisualizer
+              functionExpr={functionExpr}
+              point={limitPoint ?? undefined}
+            />
           </Card>
         </div>
 
@@ -76,12 +86,19 @@ export function CalculatorLayout() {
               </TabsContent>
 
               <TabsContent value="limits" className="mt-4">
-                <LimitsCalculator functionExpr={functionExpr} />
+                {/* Pasa setLimitPoint para que SurfaceVisualizer reciba el punto */}
+                <LimitsCalculator
+                  functionExpr={functionExpr}
+                  onPointChange={setLimitPoint}
+                />
               </TabsContent>
             </Tabs>
           </Card>
         </div>
       </main>
+
+      {/* 👇 Toaster global para notificaciones */}
+      <Toaster richColors position="top-right" />
     </div>
   )
 }

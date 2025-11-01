@@ -5,6 +5,7 @@ import { Input } from "../components/ui/input"
 import { Label } from "../components/ui/label"
 import { Button } from "../components/ui/button"
 import { Card } from "../components/ui/card"
+import { toast } from "sonner"
 import * as math from "mathjs"
 
 interface LimitsCalculatorProps {
@@ -16,7 +17,6 @@ export function LimitsCalculator({ functionExpr, onPointChange }: LimitsCalculat
   const [x0, setX0] = useState("0")
   const [y0, setY0] = useState("0")
   const [result, setResult] = useState<number | null>(null)
-  const [error, setError] = useState<string | null>(null)
 
   const handleChange = (axis: "x" | "y", value: string) => {
     if (axis === "x") setX0(value)
@@ -27,38 +27,36 @@ export function LimitsCalculator({ functionExpr, onPointChange }: LimitsCalculat
         x: parseFloat(axis === "x" ? value : x0),
         y: parseFloat(axis === "y" ? value : y0),
       })
-
-    calculateLimit(parseFloat(axis === "x" ? value : x0), parseFloat(axis === "y" ? value : y0))
   }
 
-  const calculateLimit = (a?: number, b?: number) => {
+  const calculateLimit = () => {
     try {
       if (!functionExpr || functionExpr.trim() === "") {
         throw new Error("Debe ingresar una expresión matemática.")
       }
 
-      // Intentar compilar la expresión
+      // Intentar compilar la función
       let compiled
       try {
         compiled = math.compile(functionExpr)
       } catch {
-        throw new Error("La expresión contiene un error de sintaxis.")
+        throw new Error("Error de sintaxis en la expresión.")
       }
 
-      const xVal = a ?? parseFloat(x0)
-      const yVal = b ?? parseFloat(y0)
-      if (isNaN(xVal) || isNaN(yVal)) {
+      const a = parseFloat(x0)
+      const b = parseFloat(y0)
+      if (isNaN(a) || isNaN(b)) {
         throw new Error("Los valores de x o y no son válidos.")
       }
 
       const h = 1e-4
       const directions = [
-        { x: xVal + h, y: yVal },
-        { x: xVal - h, y: yVal },
-        { x: xVal, y: yVal + h },
-        { x: xVal, y: yVal - h },
-        { x: xVal + h, y: yVal + h },
-        { x: xVal - h, y: yVal - h },
+        { x: a + h, y: b },
+        { x: a - h, y: b },
+        { x: a, y: b + h },
+        { x: a, y: b - h },
+        { x: a + h, y: b + h },
+        { x: a - h, y: b - h },
       ]
 
       const values = directions
@@ -72,15 +70,19 @@ export function LimitsCalculator({ functionExpr, onPointChange }: LimitsCalculat
         })
         .filter((v) => !isNaN(v))
 
-      if (values.length === 0) throw new Error("No se pudo evaluar la función.")
+      if (values.length === 0) {
+        throw new Error("No se pudo evaluar la función en el entorno del punto.")
+      }
 
-      const avg = values.reduce((s, v) => s + v, 0) / values.length
-      setResult(avg)
-      setError(null)
-    } catch (err) {
+      const average = values.reduce((sum, v) => sum + v, 0) / values.length
+      setResult(average)
+
+      // ✅ Mostrar toast de éxito
+      toast.success(`Límite calculado correctamente: ${average.toFixed(6)}`)
+    } catch (error) {
       const message =
-        err instanceof Error ? err.message : "Error desconocido al evaluar."
-      setError(message)
+        error instanceof Error ? error.message : "Error desconocido al calcular el límite."
+      toast.error(`❌ ${message}`)
       setResult(null)
     }
   }
@@ -90,7 +92,9 @@ export function LimitsCalculator({ functionExpr, onPointChange }: LimitsCalculat
       {/* Entradas */}
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-2">
-          <Label htmlFor="x0" className="text-xs text-gray-400">x →</Label>
+          <Label htmlFor="x0" className="text-xs text-gray-400">
+            x →
+          </Label>
           <Input
             id="x0"
             type="number"
@@ -99,7 +103,6 @@ export function LimitsCalculator({ functionExpr, onPointChange }: LimitsCalculat
             onChange={(e) => handleChange("x", e.target.value)}
             className="h-9 bg-gray-800 text-gray-100 border-gray-700"
           />
-          {/* Slider para x */}
           <input
             type="range"
             min={-5}
@@ -112,7 +115,9 @@ export function LimitsCalculator({ functionExpr, onPointChange }: LimitsCalculat
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="y0" className="text-xs text-gray-400">y →</Label>
+          <Label htmlFor="y0" className="text-xs text-gray-400">
+            y →
+          </Label>
           <Input
             id="y0"
             type="number"
@@ -121,7 +126,6 @@ export function LimitsCalculator({ functionExpr, onPointChange }: LimitsCalculat
             onChange={(e) => handleChange("y", e.target.value)}
             className="h-9 bg-gray-800 text-gray-100 border-gray-700"
           />
-          {/* Slider para y */}
           <input
             type="range"
             min={-5}
@@ -134,9 +138,9 @@ export function LimitsCalculator({ functionExpr, onPointChange }: LimitsCalculat
         </div>
       </div>
 
-      {/* Botón manual de cálculo */}
+      {/* Botón para calcular */}
       <Button
-        onClick={() => calculateLimit()}
+        onClick={calculateLimit}
         className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm"
       >
         Calcular límite
@@ -152,13 +156,6 @@ export function LimitsCalculator({ functionExpr, onPointChange }: LimitsCalculat
             </div>
           </div>
         </Card>
-      )}
-
-      {/* Mensajes de error */}
-      {error && (
-        <div className="bg-red-800/50 text-red-300 text-sm rounded-md p-2">
-          ⚠️ {error}
-        </div>
       )}
     </div>
   )
