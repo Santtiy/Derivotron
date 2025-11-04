@@ -1,231 +1,224 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
-import * as math from "mathjs"
+import { useState, useMemo } from "react";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { create, all } from "mathjs";
+
+const math = create(all, { number: "number" });
 
 interface OptimizationCalculatorProps {
-  functionExpr: string
+  functionExpr: string;
 }
 
-type Point = { x: number; y: number; value: number; lambda: number }
+type Point = { x: number; y: number; value: number; lambda: number };
 
 export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorProps) {
-  const [constraint, setConstraint] = useState("x^2 + y^2 - 4")
-  const [results, setResults] = useState<{ criticalPoints: Array<Point> } | null>(null)
+  // Restricción g(x,y)=0 editable
+  const [constraint, setConstraint] = useState("x^2 + y^2 - 4");
+  const [results, setResults] = useState<{ criticalPoints: Array<Point> } | null>(null);
 
-  // ---------- Helpers numéricos ----------
-  const compile = (expr: string) => {
-    const node = math.parse(expr)
-    return node.compile()
+  // ---------- Compilación segura ----------
+  const compiled = useMemo(() => {
+    try {
+      return {
+        f: math.compile(functionExpr || "x^2 + y^2"),
+        g: math.compile(constraint),
+      };
+    } catch {
+      return null;
+    }
+  }, [functionExpr, constraint]);
+
+  const feval = (x: number, y: number) => {
+    if (!compiled) return NaN;
+    try {
+      const v = compiled.f.evaluate({ x, y, e: Math.E, pi: Math.PI });
+      return Number.isFinite(v) ? Number(v) : NaN;
+    } catch {
+      return NaN;
+    }
+  };
+  const geval = (x: number, y: number) => {
+    if (!compiled) return NaN;
+    try {
+      const v = compiled.g.evaluate({ x, y, e: Math.E, pi: Math.PI });
+      return Number.isFinite(v) ? Number(v) : NaN;
+    } catch {
+      return NaN;
+    }
+  };
+
+  // ---------- Derivadas numéricas (centradas) ----------
+  const h = 1e-4;
+  const dfdx = (x: number, y: number) => (feval(x + h, y) - feval(x - h, y)) / (2 * h);
+  const dfdy = (x: number, y: number) => (feval(x, y + h) - feval(x, y - h)) / (2 * h);
+  const dgdx = (x: number, y: number) => (geval(x + h, y) - geval(x - h, y)) / (2 * h);
+  const dgdy = (x: number, y: number) => (geval(x, y + h) - geval(x, y - h)) / (2 * h);
+
+  const d2 = (fn: (x: number, y: number) => number, x: number, y: number) => ({
+    xx: (fn(x + h, y) - 2 * fn(x, y) + fn(x - h, y)) / (h * h),
+    yy: (fn(x, y + h) - 2 * fn(x, y) + fn(x, y - h)) / (h * h),
+    xy:
+      (fn(x + h, y + h) - fn(x + h, y - h) - fn(x - h, y + h) + fn(x - h, y - h)) /
+      (4 * h * h),
+  });
+
+  // ---------- Solver lineal 3x3 (Gauss simple) ----------
+  function solve3(A: number[][], b: number[]): number[] | null {
+    const M = [
+      [A[0][0], A[0][1], A[0][2], b[0]],
+      [A[1][0], A[1][1], A[1][2], b[1]],
+      [A[2][0], A[2][1], A[2][2], b[2]],
+    ];
+    for (let i = 0; i < 3; i++) {
+      let p = i;
+      for (let r = i + 1; r < 3; r++) if (Math.abs(M[r][i]) > Math.abs(M[p][i])) p = r;
+      if (Math.abs(M[p][i]) < 1e-12 || !Number.isFinite(M[p][i])) return null;
+      if (p !== i) [M[i], M[p]] = [M[p], M[i]];
+      const div = M[i][i];
+      for (let j = i; j < 4; j++) M[i][j] /= div;
+      for (let r = 0; r < 3; r++) {
+        if (r === i) continue;
+        const k = M[r][i];
+        for (let j = i; j < 4; j++) M[r][j] -= k * M[i][j];
+      }
+    }
+    return [M[0][3], M[1][3], M[2][3]];
   }
 
-  const makeEval = (compiled: math.EvalFunction) => (scope: { x: number; y: number }) => {
-    const v = compiled.evaluate(scope)
-    return Number(v)
-  }
-
-  // Derivadas con diferencias centradas
-  const dfdx = (f: (x: number, y: number) => number, x: number, y: number, h = 1e-5) =>
-    (f(x + h, y) - f(x - h, y)) / (2 * h)
-  const dfdy = (f: (x: number, y: number) => number, x: number, y: number, h = 1e-5) =>
-    (f(x, y + h) - f(x, y - h)) / (2 * h)
-
-  const hess2 = (f: (x: number, y: number) => number, x: number, y: number, h = 1e-4) => {
-    const fxx = (f(x + h, y) - 2 * f(x, y) + f(x - h, y)) / (h * h)
-    const fyy = (f(x, y + h) - 2 * f(x, y) + f(x, y - h)) / (h * h)
-    const fxy =
-      (f(x + h, y + h) - f(x + h, y - h) - f(x - h, y + h) + f(x - h, y - h)) / (4 * h * h)
-    return { fxx, fyy, fxy }
-  }
-
-  // Resuelve el sistema de Lagrange con Newton 3D (x,y,lambda)
+  // ---------- Newton 3D para Lagrange (x,y,λ) ----------
   function newtonLagrange(
-    f: (x: number, y: number) => number,
-    g: (x: number, y: number) => number,
     x0: number,
     y0: number,
     lambda0 = 0,
-    opts?: { tol?: number; maxIt?: number }
-  ): { x: number; y: number; lambda: number; ok: boolean } {
-    const tol = opts?.tol ?? 1e-8
-    const maxIt = opts?.maxIt ?? 40
-    let x = x0,
-      y = y0,
-      lam = lambda0
+    tol = 1e-6,
+    maxIt = 50
+  ): { x: number; y: number; lambda: number; ok: boolean; iters: number; resid: number } {
+    let x = x0, y = y0, lam = lambda0;
+    for (let it = 0; it < maxIt; it++) {
+      const fx = dfdx(x, y), fy = dfdy(x, y);
+      const gx = dgdx(x, y), gy = dgdy(x, y);
+      const g = geval(x, y);
 
-    for (let k = 0; k < maxIt; k++) {
-      const fx = dfdx(f, x, y)
-      const fy = dfdy(f, x, y)
-      const gx = dfdx(g, x, y)
-      const gy = dfdy(g, x, y)
+      if (![fx, fy, gx, gy, g].every(Number.isFinite)) break;
 
-      // Ecuaciones
-      const F1 = fx - lam * gx
-      const F2 = fy - lam * gy
-      const F3 = g(x, y)
+      const F1 = fx - lam * gx;
+      const F2 = fy - lam * gy;
+      const F3 = g;
 
-      const res = Math.abs(F1) + Math.abs(F2) + Math.abs(F3)
-      if (!Number.isFinite(res)) break
-      if (res < tol) return { x, y, lambda: lam, ok: true }
+      const resid = Math.max(Math.abs(F1), Math.abs(F2), Math.abs(F3));
+      if (resid < tol) return { x, y, lambda: lam, ok: true, iters: it, resid };
 
-      // Jacobiano del sistema
-      const Hf = hess2(f, x, y)
-      const Hg = hess2(g, x, y)
+      const Hf = d2(feval, x, y);
+      const Hg = d2(geval, x, y);
 
-      // Parciales:
-      // dF1/dx = fxx - lam*gxx ; dF1/dy = fxy - lam*gxy ; dF1/dlam = -gx
-      // dF2/dx = fxy - lam*gxy ; dF2/dy = fyy - lam*gyy ; dF2/dlam = -gy
-      // dF3/dx = gx ; dF3/dy = gy ; dF3/dlam = 0
-      const a11 = Hf.fxx - lam * Hg.fxx
-      const a12 = Hf.fxy - lam * Hg.fxy
-      const a13 = -gx
+      // Jacobiano aproximado del sistema:
+      // [ fxx - λ gxx   fxy - λ gxy   -gx ]
+      // [ fxy - λ gxy   fyy - λ gyy   -gy ]
+      // [   gx            gy           0  ]
+      const A = [
+        [Hf.xx - lam * Hg.xx, Hf.xy - lam * Hg.xy, -gx],
+        [Hf.xy - lam * Hg.xy, Hf.yy - lam * Hg.yy, -gy],
+        [gx, gy, 0],
+      ];
+      const rhs = [-F1, -F2, -F3];
+      const delta = solve3(A, rhs);
+      if (!delta) break;
 
-      const a21 = Hf.fxy - lam * Hg.fxy
-      const a22 = Hf.fyy - lam * Hg.fyy
-      const a23 = -gy
-
-      const a31 = gx
-      const a32 = gy
-      const a33 = 0
-
-      // Resolver A * delta = -F con Cramer o Gauss simple (3x3)
-      const detA =
-        a11 * (a22 * a33 - a23 * a32) -
-        a12 * (a21 * a33 - a23 * a31) +
-        a13 * (a21 * a32 - a22 * a31)
-
-      if (!Number.isFinite(detA) || Math.abs(detA) < 1e-18) {
-        // fallback: un paso pequeño hacia g=0 + corrección de paralelismo
-        const step = 1e-2
-        x -= step * F3 * gx
-        y -= step * F3 * gy
-        lam = lam // sin cambio
-        continue
-      }
-
-      const b1 = -F1,
-        b2 = -F2,
-        b3 = -F3
-
-      const dx =
-        (b1 * (a22 * a33 - a23 * a32) -
-          a12 * (b2 * a33 - a23 * b3) +
-          a13 * (b2 * a32 - a22 * b3)) /
-        detA
-      const dy =
-        (a11 * (b2 * a33 - a23 * b3) -
-          b1 * (a21 * a33 - a23 * a31) +
-          a13 * (a21 * b3 - b2 * a31)) /
-        detA
-      const dl =
-        (a11 * (a22 * b3 - b2 * a32) -
-          a12 * (a21 * b3 - b2 * a31) +
-          b1 * (a21 * a32 - a22 * a31)) /
-        detA
-
-      // Amortiguación si el paso explota
-      let step = 1.0
-      let xN = x + step * dx
-      let yN = y + step * dy
-      let lN = lam + step * dl
-      let tries = 0
+      // Línea de búsqueda simple si el paso explota
+      let step = 1.0;
+      let xn = x + step * delta[0];
+      let yn = y + step * delta[1];
+      let ln = lam + step * delta[2];
+      let tries = 0;
       while (
-        tries < 6 &&
-        (!Number.isFinite(xN) || !Number.isFinite(yN) || !Number.isFinite(lN))
+        tries < 8 &&
+        (![xn, yn, ln].every(Number.isFinite) || Math.hypot(xn - x, yn - y) > 1e3)
       ) {
-        step *= 0.5
-        xN = x + step * dx
-        yN = y + step * dy
-        lN = lam + step * dl
-        tries++
+        step *= 0.5;
+        xn = x + step * delta[0];
+        yn = y + step * delta[1];
+        ln = lam + step * delta[2];
+        tries++;
       }
 
-      x = xN
-      y = yN
-      lam = lN
-      if (Math.hypot(dx, dy) * step < tol) return { x, y, lambda: lam, ok: true }
+      x = xn; y = yn; lam = ln;
+      if (Math.hypot(delta[0] * step, delta[1] * step) < tol) {
+        return { x, y, lambda: lam, ok: true, iters: it + 1, resid: resid };
+      }
     }
-    return { x, y, lambda: lam, ok: false }
+    return { x, y, lambda: lam, ok: false, iters: maxIt, resid: Infinity };
   }
 
+  // ---------- Generar semillas cerca de g=0 ----------
+  function generateSeeds(): Array<{ x: number; y: number; lambda: number }> {
+    const seeds: Array<{ x: number; y: number; lambda: number }> = [];
+    const range = 5, step = 0.5, tolG = 0.15;
+    for (let x = -range; x <= range; x += step) {
+      for (let y = -range; y <= range; y += step) {
+        const gv = geval(x, y);
+        if (!Number.isFinite(gv) || Math.abs(gv) > tolG) continue;
+        const gx = dgdx(x, y), gy = dgdy(x, y);
+        const gf = { x: dfdx(x, y), y: dfdy(x, y) };
+        const denom = gx * gx + gy * gy;
+        const lam0 = denom > 1e-12 ? (gf.x * gx + gf.y * gy) / denom : 0; // mejor λ inicial
+        seeds.push({ x, y, lambda: lam0 });
+      }
+    }
+    return seeds;
+  }
+
+  // ---------- Ejecutar ----------
   const optimize = () => {
     try {
-      // Compilar funciones
-      const compiledF = compile(functionExpr)
-      const compiledG = compile(constraint)
-      const f = (x: number, y: number) => makeEval(compiledF)({ x, y })
-      const g = (x: number, y: number) => makeEval(compiledG)({ x, y })
+      if (!compiled) return;
 
-      // 1) Búsqueda en grilla (igual idea que tenías) para semillas cercanas a g=0
-      const seeds: Array<{ x: number; y: number; lambda: number }> = []
-      const range = 5
-      const step = 0.5
-      const tolG = 0.15
+      const seeds = generateSeeds();
+      const found: Point[] = [];
+      const seen: { x: number; y: number }[] = [];
 
-      const gradF = (x: number, y: number) => ({
-        x: dfdx(f, x, y),
-        y: dfdy(f, x, y),
-      })
-      const gradG = (x: number, y: number) => ({
-        x: dfdx(g, x, y),
-        y: dfdy(g, x, y),
-      })
-
-      for (let x = -range; x <= range; x += step) {
-        for (let y = -range; y <= range; y += step) {
-          const gv = g(x, y)
-          if (Math.abs(gv) < tolG) {
-            const gf = gradF(x, y)
-            const gg = gradG(x, y)
-            // lambda aproximado (mejor que 0): proyecta gf sobre gg
-            const denom = gg.x * gg.x + gg.y * gg.y
-            const lam0 =
-              denom > 1e-12 ? (gf.x * gg.x + gf.y * gg.y) / denom : 0
-            seeds.push({ x, y, lambda: lam0 })
-          }
-        }
-      }
-
-      // 2) Refinar con Newton cada semilla
-      const candidates: Point[] = []
-      const seen: Array<{ x: number; y: number }> = []
       const isNear = (a: { x: number; y: number }, b: { x: number; y: number }) =>
-        Math.abs(a.x - b.x) < 0.2 && Math.abs(a.y - b.y) < 0.2
+        Math.hypot(a.x - b.x, a.y - b.y) < 0.2;
 
       for (const s of seeds) {
-        const sol = newtonLagrange(f, g, s.x, s.y, s.lambda)
-        if (!sol.ok || !Number.isFinite(sol.x) || !Number.isFinite(sol.y)) continue
+        const out = newtonLagrange(s.x, s.y, s.lambda, 1e-6, 60);
+        if (!out.ok || ![out.x, out.y].every(Number.isFinite)) continue;
+
+        // check residuo final de sistema
+        const fx = dfdx(out.x, out.y), fy = dfdy(out.x, out.y);
+        const gx = dgdx(out.x, out.y), gy = dgdy(out.x, out.y);
+        const g = geval(out.x, out.y);
+        const r1 = Math.abs(fx - out.lambda * gx);
+        const r2 = Math.abs(fy - out.lambda * gy);
+        const r3 = Math.abs(g);
+        const resid = Math.max(r1, r2, r3);
+        if (!(resid < 1e-4)) continue;
+
         // de-dup
-        if (seen.some((p) => isNear(p, sol))) continue
-        seen.push({ x: sol.x, y: sol.y })
-        candidates.push({
-          x: Number(sol.x),
-          y: Number(sol.y),
-          value: f(sol.x, sol.y),
-          lambda: Number(sol.lambda),
-        })
-        if (candidates.length > 12) break
+        if (seen.some((p) => isNear(p, out))) continue;
+        seen.push({ x: out.x, y: out.y });
+
+        found.push({
+          x: Number.parseFloat(out.x.toFixed(6)),
+          y: Number.parseFloat(out.y.toFixed(6)),
+          value: Number.parseFloat(feval(out.x, out.y).toFixed(6)),
+          lambda: Number.parseFloat(out.lambda.toFixed(6)),
+        });
+
+        if (found.length > 12) break;
       }
 
-      // Ordena por valor de f (útil para ver extremos) y recorta
-      candidates.sort((a, b) => a.value - b.value)
-      const top = candidates.slice(0, 5).map((p) => ({
-        ...p,
-        x: Number.parseFloat(p.x.toFixed(6)),
-        y: Number.parseFloat(p.y.toFixed(6)),
-        value: Number.parseFloat(p.value.toFixed(6)),
-        lambda: Number.parseFloat(p.lambda.toFixed(6)),
-      }))
-
-      setResults({ criticalPoints: top })
-    } catch (error) {
-      console.error("[v0] Error in optimization:", error)
+      // ordena por f ascendente (puedes cambiarlo a descendente si prefieres)
+      found.sort((a, b) => a.value - b.value);
+      setResults({ criticalPoints: found });
+    } catch (err) {
+      console.error("[optimization] error:", err);
+      setResults({ criticalPoints: [] });
     }
-  }
+  };
 
   return (
     <div className="space-y-4">
@@ -275,10 +268,12 @@ export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorP
       {results && results.criticalPoints.length === 0 && (
         <Card className="bg-muted/30 p-4">
           <p className="text-center text-xs text-muted-foreground">
-            No se encontraron puntos críticos. Intente con otra restricción.
+            No se encontraron puntos críticos. Intenta con otra restricción o cambia la función.
           </p>
         </Card>
       )}
     </div>
-  )
+  );
 }
+
+export default OptimizationCalculator;
