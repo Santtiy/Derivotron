@@ -1,8 +1,10 @@
-import React from "react";
+"use client"
+
+import React from "react"
 
 interface FunctionInputProps {
-  value: string;
-  onChange: (value: string) => void;
+  value: string
+  onChange: (value: string) => void
 }
 
 export const FunctionInput = ({ value, onChange }: FunctionInputProps) => {
@@ -19,5 +21,5 @@ export const FunctionInput = ({ value, onChange }: FunctionInputProps) => {
         className="p-2 rounded-md bg-gray-800 text-white border border-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
       />
     </div>
-  );
-};
+  )
+}
