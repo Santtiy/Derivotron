@@ -9,16 +9,16 @@ import { create, all } from "mathjs";
 
 const math = create(all, { number: "number" });
 
+export type Candidate = { x: number; y: number; f: number; lambda: number };
+
 interface OptimizationCalculatorProps {
   functionExpr: string;
+  onCandidatesChange?: (pts: Candidate[]) => void; // <-- NUEVO
 }
 
-type Point = { x: number; y: number; value: number; lambda: number };
-
-export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorProps) {
-  // Restricción g(x,y)=0 editable
+export function OptimizationCalculator({ functionExpr, onCandidatesChange }: OptimizationCalculatorProps) {
   const [constraint, setConstraint] = useState("x^2 + y^2 - 4");
-  const [results, setResults] = useState<{ criticalPoints: Array<Point> } | null>(null);
+  const [results, setResults] = useState<{ criticalPoints: Array<Candidate> } | null>(null);
 
   // ---------- Compilación segura ----------
   const compiled = useMemo(() => {
@@ -95,14 +95,13 @@ export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorP
     y0: number,
     lambda0 = 0,
     tol = 1e-6,
-    maxIt = 50
-  ): { x: number; y: number; lambda: number; ok: boolean; iters: number; resid: number } {
+    maxIt = 60
+  ): { x: number; y: number; lambda: number; ok: boolean } {
     let x = x0, y = y0, lam = lambda0;
     for (let it = 0; it < maxIt; it++) {
       const fx = dfdx(x, y), fy = dfdy(x, y);
       const gx = dgdx(x, y), gy = dgdy(x, y);
       const g = geval(x, y);
-
       if (![fx, fy, gx, gy, g].every(Number.isFinite)) break;
 
       const F1 = fx - lam * gx;
@@ -110,15 +109,11 @@ export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorP
       const F3 = g;
 
       const resid = Math.max(Math.abs(F1), Math.abs(F2), Math.abs(F3));
-      if (resid < tol) return { x, y, lambda: lam, ok: true, iters: it, resid };
+      if (resid < tol) return { x, y, lambda: lam, ok: true };
 
       const Hf = d2(feval, x, y);
       const Hg = d2(geval, x, y);
 
-      // Jacobiano aproximado del sistema:
-      // [ fxx - λ gxx   fxy - λ gxy   -gx ]
-      // [ fxy - λ gxy   fyy - λ gyy   -gy ]
-      // [   gx            gy           0  ]
       const A = [
         [Hf.xx - lam * Hg.xx, Hf.xy - lam * Hg.xy, -gx],
         [Hf.xy - lam * Hg.xy, Hf.yy - lam * Hg.yy, -gy],
@@ -128,7 +123,6 @@ export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorP
       const delta = solve3(A, rhs);
       if (!delta) break;
 
-      // Línea de búsqueda simple si el paso explota
       let step = 1.0;
       let xn = x + step * delta[0];
       let yn = y + step * delta[1];
@@ -147,10 +141,10 @@ export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorP
 
       x = xn; y = yn; lam = ln;
       if (Math.hypot(delta[0] * step, delta[1] * step) < tol) {
-        return { x, y, lambda: lam, ok: true, iters: it + 1, resid: resid };
+        return { x, y, lambda: lam, ok: true };
       }
     }
-    return { x, y, lambda: lam, ok: false, iters: maxIt, resid: Infinity };
+    return { x, y, lambda: lam, ok: false };
   }
 
   // ---------- Generar semillas cerca de g=0 ----------
@@ -164,7 +158,7 @@ export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorP
         const gx = dgdx(x, y), gy = dgdy(x, y);
         const gf = { x: dfdx(x, y), y: dfdy(x, y) };
         const denom = gx * gx + gy * gy;
-        const lam0 = denom > 1e-12 ? (gf.x * gx + gf.y * gy) / denom : 0; // mejor λ inicial
+        const lam0 = denom > 1e-12 ? (gf.x * gx + gf.y * gy) / denom : 0;
         seeds.push({ x, y, lambda: lam0 });
       }
     }
@@ -177,7 +171,7 @@ export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorP
       if (!compiled) return;
 
       const seeds = generateSeeds();
-      const found: Point[] = [];
+      const found: Candidate[] = [];
       const seen: { x: number; y: number }[] = [];
 
       const isNear = (a: { x: number; y: number }, b: { x: number; y: number }) =>
@@ -187,7 +181,7 @@ export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorP
         const out = newtonLagrange(s.x, s.y, s.lambda, 1e-6, 60);
         if (!out.ok || ![out.x, out.y].every(Number.isFinite)) continue;
 
-        // check residuo final de sistema
+        // residuo final de sistema
         const fx = dfdx(out.x, out.y), fy = dfdy(out.x, out.y);
         const gx = dgdx(out.x, out.y), gy = dgdy(out.x, out.y);
         const g = geval(out.x, out.y);
@@ -197,26 +191,28 @@ export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorP
         const resid = Math.max(r1, r2, r3);
         if (!(resid < 1e-4)) continue;
 
-        // de-dup
         if (seen.some((p) => isNear(p, out))) continue;
         seen.push({ x: out.x, y: out.y });
 
         found.push({
           x: Number.parseFloat(out.x.toFixed(6)),
           y: Number.parseFloat(out.y.toFixed(6)),
-          value: Number.parseFloat(feval(out.x, out.y).toFixed(6)),
+          f: Number.parseFloat(feval(out.x, out.y).toFixed(6)),
           lambda: Number.parseFloat(out.lambda.toFixed(6)),
         });
 
-        if (found.length > 12) break;
+        if (found.length > 20) break;
       }
 
-      // ordena por f ascendente (puedes cambiarlo a descendente si prefieres)
-      found.sort((a, b) => a.value - b.value);
+      found.sort((a, b) => a.f - b.f);
       setResults({ criticalPoints: found });
+
+      // Emitir hacia el layout / visualizador
+      onCandidatesChange?.(found);
     } catch (err) {
       console.error("[optimization] error:", err);
       setResults({ criticalPoints: [] });
+      onCandidatesChange?.([]);
     }
   };
 
@@ -242,22 +238,22 @@ export function OptimizationCalculator({ functionExpr }: OptimizationCalculatorP
       {results && results.criticalPoints.length > 0 && (
         <div className="space-y-2">
           <Label className="text-xs text-muted-foreground">Puntos críticos encontrados:</Label>
-          {results.criticalPoints.map((point, idx) => (
+          {results.criticalPoints.map((p, idx) => (
             <Card key={idx} className="bg-muted/50 p-3">
               <div className="space-y-1 text-xs">
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">Punto:</span>
                   <span className="font-mono">
-                    ({point.x.toFixed(2)}, {point.y.toFixed(2)})
+                    ({p.x.toFixed(2)}, {p.y.toFixed(2)})
                   </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">f(x, y):</span>
-                  <span className="font-mono font-medium">{point.value.toFixed(4)}</span>
+                  <span className="font-mono font-medium">{p.f.toFixed(4)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-muted-foreground">λ:</span>
-                  <span className="font-mono">{point.lambda.toFixed(4)}</span>
+                  <span className="font-mono">{p.lambda.toFixed(4)}</span>
                 </div>
               </div>
             </Card>

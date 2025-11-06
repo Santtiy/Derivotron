@@ -311,7 +311,7 @@ export function IntegrationCalculator({ functionExpr }: IntegrationCalculatorPro
     const lo = Math.min(rmin, rmax);
     const hi = Math.max(rmin, rmax);
     return r >= lo && r <= hi;
-    };
+  };
 
   const computePolar = () => {
     const gtheta = (theta: number) => {
@@ -387,14 +387,19 @@ export function IntegrationCalculator({ functionExpr }: IntegrationCalculatorPro
 
   const currentMask: RegionMask = useMemo(() => {
     switch (activeTab) {
-      case "rect": return maskRect;
-      case "tipoI": return maskTipoI;
-      case "tipoII": return maskTipoII;
-      case "polar": return maskPolar;
+      case "rect":
+        return maskRect;
+      case "tipoI":
+        return maskTipoI;
+      case "tipoII":
+        return maskTipoII;
+      case "polar":
+        return maskPolar;
     }
   }, [activeTab, maskRect, maskTipoI, maskTipoII, maskPolar]);
 
-  const heat = useMemo(() => regionHeatmap(currentMask, view.xMin, view.xMax, view.yMin, view.yMax, 140),
+  const heat = useMemo(
+    () => regionHeatmap(currentMask, view.xMin, view.xMax, view.yMin, view.yMax, 140),
     [currentMask, view]
   );
 
@@ -409,17 +414,9 @@ export function IntegrationCalculator({ functionExpr }: IntegrationCalculatorPro
     if (activeTab === "polar") out = computePolar();
     setResult(out);
   };
-
   return (
-    <Tabs
-      value={
-        activeTab === "rect" ? "rect" :
-        activeTab === "tipoI" ? "tipoI" :
-        activeTab === "tipoII" ? "tipoII" : "polar"
-      }
-      onValueChange={(v) => setActiveTab(v as any)}
-      className="w-full"
-    >
+    <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
+      {/* Panel de parámetros */}
       <TabsList className="grid w-full grid-cols-4">
         <TabsTrigger value="rect" className="text-xs">Rectangular</TabsTrigger>
         <TabsTrigger value="tipoI" className="text-xs">Tipo I</TabsTrigger>
@@ -427,7 +424,6 @@ export function IntegrationCalculator({ functionExpr }: IntegrationCalculatorPro
         <TabsTrigger value="polar" className="text-xs">Polares</TabsTrigger>
       </TabsList>
 
-      {/* Panel de parámetros */}
       <TabsContent value="rect" className="space-y-4">
         <Card className="p-4 space-y-3">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -439,128 +435,39 @@ export function IntegrationCalculator({ functionExpr }: IntegrationCalculatorPro
         </Card>
       </TabsContent>
 
-      <TabsContent value="tipoI" className="space-y-4">
-        <Card className="p-4 space-y-3">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div><Label>a</Label><Input type="number" value={tipoI.a} onChange={(e) => setTipoI({ ...tipoI, a: parseFloat(e.target.value) })} /></div>
-            <div><Label>b</Label><Input type="number" value={tipoI.b} onChange={(e) => setTipoI({ ...tipoI, b: parseFloat(e.target.value) })} /></div>
-            <div className="md:col-span-2"><Label>g1(x)</Label><Input value={tipoI.g1} onChange={(e) => setTipoI({ ...tipoI, g1: e.target.value })} className="font-mono" /></div>
-            <div className="md:col-span-2"><Label>g2(x)</Label><Input value={tipoI.g2} onChange={(e) => setTipoI({ ...tipoI, g2: e.target.value })} className="font-mono" /></div>
-          </div>
-        </Card>
-      </TabsContent>
-
-      <TabsContent value="tipoII" className="space-y-4">
-        <Card className="p-4 space-y-3">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div><Label>c</Label><Input type="number" value={tipoII.c} onChange={(e) => setTipoII({ ...tipoII, c: parseFloat(e.target.value) })} /></div>
-            <div><Label>d</Label><Input type="number" value={tipoII.d} onChange={(e) => setTipoII({ ...tipoII, d: parseFloat(e.target.value) })} /></div>
-            <div className="md:col-span-2"><Label>h1(y)</Label><Input value={tipoII.h1} onChange={(e) => setTipoII({ ...tipoII, h1: e.target.value })} className="font-mono" /></div>
-            <div className="md:col-span-2"><Label>h2(y)</Label><Input value={tipoII.h2} onChange={(e) => setTipoII({ ...tipoII, h2: e.target.value })} className="font-mono" /></div>
-          </div>
-        </Card>
-      </TabsContent>
-
-      <TabsContent value="polar" className="space-y-4">
-        <Card className="p-4 space-y-3">
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-            <div><Label>α (rad)</Label><Input type="number" value={polar.alpha} onChange={(e) => setPolar({ ...polar, alpha: parseFloat(e.target.value) })} /></div>
-            <div><Label>β (rad)</Label><Input type="number" value={polar.beta} onChange={(e) => setPolar({ ...polar, beta: parseFloat(e.target.value) })} /></div>
-            <div className="md:col-span-2"><Label>r₁(θ)</Label><Input value={polar.r1} onChange={(e) => setPolar({ ...polar, r1: e.target.value })} className="font-mono" /></div>
-            <div className="md:col-span-2"><Label>r₂(θ)</Label><Input value={polar.r2} onChange={(e) => setPolar({ ...polar, r2: e.target.value })} className="font-mono" /></div>
-          </div>
-        </Card>
-      </TabsContent>
-
-      {/* Controles comunes + Visual + Resultado */}
-      <div className="grid md:grid-cols-2 gap-4 mt-2">
-        <Card className="p-4 space-y-3">
-          <h4 className="font-semibold">Parámetros comunes</h4>
-          <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
-            <div><Label>nx</Label><Input type="number" value={nx} onChange={(e) => setNx(parseInt(e.target.value || "200", 10))} /></div>
-            <div><Label>ny</Label><Input type="number" value={ny} onChange={(e) => setNy(parseInt(e.target.value || "200", 10))} /></div>
-            <div><Label>xMin</Label><Input type="number" value={view.xMin} onChange={(e) => setView({ ...view, xMin: parseFloat(e.target.value) })} /></div>
-            <div><Label>xMax</Label><Input type="number" value={view.xMax} onChange={(e) => setView({ ...view, xMax: parseFloat(e.target.value) })} /></div>
-            <div><Label>yMin</Label><Input type="number" value={view.yMin} onChange={(e) => setView({ ...view, yMin: parseFloat(e.target.value) })} /></div>
-            <div><Label>yMax</Label><Input type="number" value={view.yMax} onChange={(e) => setView({ ...view, yMax: parseFloat(e.target.value) })} /></div>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-            <div className="md:col-span-2">
-              <Label>f(x,y)</Label>
-              <Input value={functionExpr} readOnly className="font-mono" />
-            </div>
-            <div className="md:col-span-2">
-              <Label>ρ(x,y) (densidad)</Label>
-              <Input value={rhoExpr} onChange={(e) => setRhoExpr(e.target.value)} className="font-mono" />
-            </div>
-          </div>
-
-          <Button onClick={runCompute} className="w-full mt-2">Integrar ∬</Button>
-        </Card>
-
-        <Card className="p-4 space-y-3">
-          <h4 className="font-semibold">Región de integración (plano x–y)</h4>
-          <div className="w-full h-[360px]">
-            <Plot
-              data={[
-                {
-                  type: "heatmap",
-                  x: heat.xs,
-                  y: heat.ys,
-                  z: heat.Z,
-                  showscale: false,
-                  colorscale: [
-                    [0, "rgba(56,189,248,0)"],
-                    [1, "rgba(56,189,248,0.35)"],
-                  ],
-                  hoverinfo: "skip",
-                } as any,
-                {
-                  type: "contour",
-                  x: heat.xs,
-                  y: heat.ys,
-                  z: heat.Z.map((row) => row.map((v) => (Number.isFinite(v) ? 1 : 0))),
-                  showscale: false,
-                  contours: { coloring: "lines", showlabels: false, start: 0.5, end: 0.5, size: 1 },
-                  line: { width: 2 },
-                  hoverinfo: "skip",
-                } as any,
-              ]}
-              layout={{
-                margin: { l: 20, r: 10, t: 10, b: 30 },
-                paper_bgcolor: "rgba(0,0,0,0)",
-                plot_bgcolor: "rgba(0,0,0,0)",
-                xaxis: { title: "x", zeroline: true },
-                yaxis: { title: "y", zeroline: true, scaleanchor: "x", scaleratio: 1 },
-              } as any}
-              config={{ displayModeBar: false, responsive: true }}
-              style={{ width: "100%", height: "100%" }}
-            />
-          </div>
-
-          <div className="rounded border p-3 bg-muted/30">
-            <div className="text-sm">Resultado:</div>
-            {result ? (
-              <div className="grid grid-cols-3 gap-2 pt-1">
-                <div>
-                  <div className="text-xs text-muted-foreground">∬ f·ρ dA</div>
-                  <div className="font-mono">{Number.isFinite(result.mass) ? result.mass.toPrecision(6) : "n/a"}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">x̄</div>
-                  <div className="font-mono">{Number.isFinite(result.cx) ? result.cx.toPrecision(6) : "n/a"}</div>
-                </div>
-                <div>
-                  <div className="text-xs text-muted-foreground">ȳ</div>
-                  <div className="font-mono">{Number.isFinite(result.cy) ? result.cy.toPrecision(6) : "n/a"}</div>
-                </div>
-              </div>
-            ) : (
-              <div className="text-xs text-muted-foreground">Pulsa “Integrar ∬” para calcular.</div>
-            )}
-          </div>
-        </Card>
+      <div className="w-full h-[360px]">
+        <Plot
+          data={[
+            {
+              type: "heatmap",
+              x: heat.xs,
+              y: heat.ys,
+              z: heat.Z,
+              showscale: false,
+              colorscale: ["rgba(56,189,248,0)", "rgba(56,189,248,0.35)"],
+              hoverinfo: "skip",
+            } as any,
+            {
+              type: "contour",
+              x: heat.xs,
+              y: heat.ys,
+              z: heat.Z.map((row) => row.map((v) => (Number.isFinite(v) ? 1 : 0))),
+              showscale: false,
+              contours: { coloring: "lines", showlabels: false, start: 0.5, end: 0.5, size: 1 },
+              line: { width: 2 },
+              hoverinfo: "skip",
+            } as any,
+          ]}
+          layout={{
+            margin: { l: 20, r: 10, t: 10, b: 30 },
+            paper_bgcolor: "rgba(0,0,0,0)",
+            plot_bgcolor: "rgba(0,0,0,0)",
+            xaxis: { title: { text: "x" }, zeroline: true },
+            yaxis: { title: { text: "y" }, zeroline: true, scaleanchor: "x", scaleratio: 1 },
+          }}
+          config={{ displayModeBar: false, responsive: true }}
+          style={{ width: "100%", height: "100%" }}
+        />
       </div>
     </Tabs>
   );
