@@ -1,28 +1,10 @@
 "use client";
 
 import React, { useMemo, useState, useEffect } from "react";
-import { Card } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Slider } from "@/components/ui/slider";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { AlertCircle, Sigma, LineChart, Wand2 } from "lucide-react";
 import { create, all } from "mathjs";
-
-/**
- * LimitsExplorer.tsx
- * - Rutas: rectas (múltiples θ), ejes, parábolas y curvas aleatorias.
- * - Chequeo de convergencia por ruta y veredicto global con tolerancia.
- * - Explorador empírico ε–δ.
- * - NUEVO: Panel Polar (θ → límite por r→0 en rayos).
- *
- * Dependencia: mathjs
- *   npm i mathjs
- */
+import { Card } from "../ui/card"; // Ajusta si tu alias "@" funciona: "@/components/ui/card"
 
 const math = create(all, { number: "number" });
-
-// ------------------------- Tipos -------------------------
 
 type PathSample = {
   label: string;
@@ -32,446 +14,244 @@ type PathSample = {
   error?: string;
 };
 
-export type LimitsExplorerProps = {
-  functionExpr?: string;
-  onPointChange?: (p: { x: number; y: number } | null) => void;
-};
-
-// ------------------------- Utils -------------------------
+type Verdict = { status: "exists" | "diverges" | "inconclusive"; value?: number; spread?: number };
 
 function safeCompile(expr: string) {
   try {
+    // Compila una expresión en términos de x,y usando mathjs
     return math.compile(expr);
-  } catch {
-    throw new Error("No se pudo interpretar la función. Revisa la sintaxis.");
+  } catch (e) {
+    return null;
   }
 }
 
 function evalAt(compiled: any, x: number, y: number) {
   try {
-    const v = compiled.evaluate({ x, y, e: Math.E, pi: Math.PI });
-    if (!Number.isFinite(v)) return NaN;
-    return Number(v);
+    return Number(compiled.evaluate({ x, y }));
   } catch {
     return NaN;
   }
 }
 
-function makeGeometricRadii(levels: number, base: number) {
-  return Array.from({ length: levels }, (_, i) => Math.pow(base, i + 1));
+function makeRadii(n = 6, base = 0.5) {
+  return Array.from({ length: n }, (_, i) => Math.pow(base, i + 1));
 }
 
-function linePaths(thetaList: number[], radii: number[], x0: number, y0: number) {
+function linePaths(thetaList: number[], radii: number[], x0 = 0, y0 = 0): PathSample[] {
   return thetaList.map((theta) => {
-    const points = radii.map((r) => ({
+    const pts = radii.map((r) => ({
       x: x0 + r * Math.cos(theta),
       y: y0 + r * Math.sin(theta),
       r,
     }));
-    return { label: `recta θ=${theta.toFixed(2)}`, points } as Omit<PathSample, "values">;
+    return { label: `recta θ=${theta.toFixed(2)}`, points: pts, values: [] };
   });
 }
 
-function axisAlignedPaths(radii: number[], x0: number, y0: number) {
-  const dirs = [
-    { dx: 1, dy: 0, label: "x→x0 (y fijo)" },
-    { dx: -1, dy: 0, label: "x←x0 (y fijo)" },
-    { dx: 0, dy: 1, label: "y→y0 (x fijo)" },
-    { dx: 0, dy: -1, label: "y←y0 (x fijo)" },
-  ];
-  return dirs.map((d) => {
-    const points = radii.map((r) => ({ x: x0 + d.dx * r, y: y0 + d.dy * r, r }));
-    return { label: d.label, points } as Omit<PathSample, "values">;
-  });
-}
-
-function parabolaPaths(radii: number[], x0: number, y0: number, ks: number[]) {
+function parabolaPaths(radii: number[], x0 = 0, y0 = 0, ks = [-1, -0.5, 0.5, 1]) {
   return ks.map((k) => {
-    const points = radii.map((r) => ({ x: x0 + r, y: y0 + k * r * r, r }));
-    return { label: `parábola k=${k}`, points } as Omit<PathSample, "values">;
+    const pts = radii.map((r) => {
+      // parábola centrada en (x0,y0) con parámetro k: y = k (x - x0)^2 + y0
+      const x = x0 + r;
+      const y = y0 + k * Math.pow(r, 2);
+      return { x, y, r };
+    });
+    return { label: `parábola k=${k}`, points: pts, values: [] };
   });
 }
 
-function randomSmoothPaths(nPaths: number, radii: number[], x0: number, y0: number, seed = 42) {
-  let s = seed % 2147483647;
-  const rnd = () => (s = (s * 48271) % 2147483647) / 2147483647;
+function analyzeConvergence(values: number[]) {
+  const finite = values.filter(Number.isFinite);
+  if (finite.length === 0) return { convergesTo: undefined, spread: Infinity };
+  const tail = finite.slice(-3);
+  const avg = tail.reduce((a, b) => a + b, 0) / tail.length;
+  const spread = Math.max(...tail) - Math.min(...tail);
+  return { convergesTo: avg, spread };
+}
 
-  const res: Omit<PathSample, "values">[] = [];
-  for (let i = 0; i < nPaths; i++) {
-    const a = (rnd() - 0.5) * 2;
-    const b = (rnd() - 0.5) * 2;
-    const phi = rnd() * Math.PI * 2;
-    const points = radii.map((r, j) => {
-      const t = j / (radii.length - 1 || 1);
-      const dx = r * (Math.cos(phi) + a * t);
-      const dy = r * (Math.sin(phi) + b * (1 - t));
-      return { x: x0 + dx, y: y0 + dy, r };
-    });
-    res.push({ label: `curva aleatoria ${i + 1}`, points });
+function computeMixedPaths(compiled: any, x0: number, y0: number) {
+  const radii = makeRadii(8, 0.6);
+  const thetas = [0, Math.PI / 6, Math.PI / 3, Math.PI / 2, (2 * Math.PI) / 3, Math.PI];
+  const paths: PathSample[] = [
+    ...linePaths(thetas, radii, x0, y0),
+    ...parabolaPaths(radii, x0, y0, [-1, -0.5, 0.5, 1]),
+  ];
+
+  for (const p of paths) {
+    p.values = p.points.map((pt) => evalAt(compiled, pt.x, pt.y));
+    const { convergesTo, spread } = analyzeConvergence(p.values);
+    p.convergesTo = convergesTo;
+    if (!Number.isFinite(convergesTo)) p.error = "no finito";
   }
-  return res;
+
+  return paths;
 }
 
-function analyzeConvergence(values: number[], minTail: number) {
-  const n = values.length;
-  if (n < minTail) return { ok: false } as const;
-  const tail = values.slice(-minTail);
-  const mean = tail.reduce((a, b) => a + b, 0) / tail.length;
-  const maxDev = Math.max(...tail.map((v) => Math.abs(v - mean)));
-  return { ok: true, mean, maxDev } as const;
-}
-
-function globalVerdict(paths: PathSample[], tol: number) {
-  const winners = paths.filter((p) => Number.isFinite(p.convergesTo ?? NaN));
-  if (winners.length === 0) return { status: "undetermined" as const };
-  const means = winners.map((p) => p.convergesTo!);
-  const mu = means.reduce((a, b) => a + b, 0) / means.length;
-  const maxDiff = Math.max(...means.map((v) => Math.abs(v - mu)));
-  if (maxDiff <= tol) return { status: "exists", value: mu, spread: maxDiff } as const;
-  return {
-    status: "counterexample",
-    pairs: winners.map((p) => ({ label: p.label, value: p.convergesTo })),
-  } as const;
-}
-
-function epsilonDeltaProbe(compiled: any, x0: number, y0: number, epsilon: number, delta: number, samples = 250) {
-  let maxVar = 0;
-  let f0 = evalAt(compiled, x0, y0);
-  if (!Number.isFinite(f0)) f0 = 0;
-  for (let i = 0; i < samples; i++) {
-    const t = Math.random() * 2 * Math.PI;
-    const r = Math.random() * delta;
-    const x = x0 + r * Math.cos(t);
-    const y = y0 + r * Math.sin(t);
-    const v = evalAt(compiled, x, y);
-    if (Number.isFinite(v)) {
-      maxVar = Math.max(maxVar, Math.abs(v - f0));
-    }
-  }
-  return { ok: maxVar < epsilon, maxVar };
-}
-
-// ------------------------- UI -------------------------
-
-export default function LimitsExplorer({ functionExpr, onPointChange }: LimitsExplorerProps) {
-  const [expr, setExpr] = useState<string>(functionExpr ?? "(x*x*y)/(x*x + y*y)");
-  useEffect(() => {
-    if (typeof functionExpr === "string") setExpr(functionExpr);
-  }, [functionExpr]);
-
-  const [x0, setX0] = useState<number>(0);
-  const [y0, setY0] = useState<number>(0);
-  useEffect(() => {
-    onPointChange?.({ x: x0, y: y0 });
-  }, [x0, y0, onPointChange]);
-
-  // Parámetros generales
-  const [levels, setLevels] = useState<number>(6);
-  const [base, setBase] = useState<number>(0.2);
-  const [thetaCount, setThetaCount] = useState<number>(8);
-  const [kList, setKList] = useState<string>("-2,-1,-0.5,0.5,1,2");
-  const [randCount, setRandCount] = useState<number>(2);
-  const [tail, setTail] = useState<number>(3);
-  const [tol, setTol] = useState<number>(1e-3);
-
-  const compiled = useMemo(() => safeCompile(expr), [expr]);
-
-  // ----------- Cálculo rutas “mixto” (rectas/ejes/parábolas/aleatorias) -----------
-  const result = useMemo(() => {
-    const radii = makeGeometricRadii(levels, base);
-    const thetas = Array.from({ length: thetaCount }, (_, i) => (i * 2 * Math.PI) / thetaCount);
-    const lines = linePaths(thetas, radii, x0, y0);
-    const axes = axisAlignedPaths(radii, x0, y0);
-    const ks = kList.split(",").map((s) => Number(s.trim())).filter((v) => Number.isFinite(v));
-    const parabs = parabolaPaths(radii, x0, y0, ks);
-    const randoms = randomSmoothPaths(randCount, radii, x0, y0);
-
-    const all: PathSample[] = [...lines, ...axes, ...parabs, ...randoms].map((p) => ({ ...p, values: [] }));
-
-    for (const p of all) {
-      for (const pt of p.points) p.values.push(evalAt(compiled, pt.x, pt.y));
-      const finiteSeq = p.values.filter((v) => Number.isFinite(v));
-      if (finiteSeq.length >= tail) {
-        const an = analyzeConvergence(finiteSeq, tail);
-        if (an.ok && Number.isFinite(an.mean) && an.maxDev < tol) p.convergesTo = an.mean;
-      }
-    }
-    return { radii, paths: all, verdict: globalVerdict(all, tol) } as const;
-  }, [expr, x0, y0, levels, base, thetaCount, kList, randCount, tail, tol]);
-
-  // ----------- NUEVO: Panel Polar (θ → límite por r→0) -----------
-  const [thetaStart, setThetaStart] = useState<number>(0); // en radianes
-  const [thetaN, setThetaN] = useState<number>(16);
-  const polar = useMemo(() => {
-    const radii = makeGeometricRadii(levels, base);
-    const thetas = Array.from({ length: thetaN }, (_, i) => thetaStart + (i * 2 * Math.PI) / thetaN);
-
-    const rows = thetas.map((theta) => {
-      const seq = radii.map((r) => evalAt(compiled, x0 + r * Math.cos(theta), y0 + r * Math.sin(theta)));
-      const finite = seq.filter((v) => Number.isFinite(v));
-      let approx: number | null = null;
-      if (finite.length >= tail) {
-        const an = analyzeConvergence(finite, tail);
-        if (an.ok && an.maxDev < tol) approx = an.mean;
-      }
-      return {
-        theta,
-        last: finite.slice(-tail).map((v) => Number(v)),
-        limit: approx,
-      };
-    });
-
-    const cand = rows.map((r) => r.limit).filter((v): v is number => Number.isFinite(v as number));
-    let verdict:
-      | { status: "polar-undetermined" }
-      | { status: "polar-consistent"; value: number; spread: number }
-      | { status: "polar-inconsistent"; min: number; max: number } = { status: "polar-undetermined" };
-
-    if (cand.length > 0) {
-      const mu = cand.reduce((a, b) => a + b, 0) / cand.length;
-      const spread = Math.max(...cand.map((v) => Math.abs(v - mu)));
-      if (spread <= tol) verdict = { status: "polar-consistent", value: mu, spread };
-      else verdict = { status: "polar-inconsistent", min: Math.min(...cand), max: Math.max(...cand) };
-    }
-    return { rows, verdict } as const;
-  }, [compiled, x0, y0, levels, base, thetaN, thetaStart, tail, tol]);
-
-  // ----------- ε–δ -----------
-  const [epsilon, setEpsilon] = useState<number>(0.05);
-  const [delta, setDelta] = useState<number>(0.05);
-  const probe = useMemo(() => epsilonDeltaProbe(compiled, x0, y0, epsilon, delta), [compiled, x0, y0, epsilon, delta]);
-
+/* Pequeño componente local que muestra un veredicto simple.
+   Si ya existe VerdictView en tu proyecto, reemplaza esto por la importación. */
+function VerdictView({ verdict, tol }: { verdict: Verdict; tol?: number }) {
+  if (!verdict) return null;
+  const color =
+    verdict.status === "exists" ? "text-emerald-400" : verdict.status === "diverges" ? "text-rose-400" : "text-yellow-400";
   return (
-    <div className="w-full grid gap-4 md:grid-cols-2">
-      {/* Controles */}
-      <Card className="p-4 space-y-4">
-        <h2 className="text-xl font-semibold flex items-center gap-2">
-          <Sigma className="w-5 h-5" /> Límite en (x0,y0)
-        </h2>
-
-        <div className="grid gap-3">
-          <div>
-            <Label>f(x,y)</Label>
-            <Input value={expr} onChange={(e) => setExpr(e.target.value)} placeholder="Ej: (x^2*y)/(x^2+y^2)" />
-          </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label>x0</Label>
-              <Input type="number" value={x0} onChange={(e) => setX0(parseFloat(e.target.value))} />
-            </div>
-            <div>
-              <Label>y0</Label>
-              <Input type="number" value={y0} onChange={(e) => setY0(parseFloat(e.target.value))} />
-            </div>
-          </div>
+    <div className={`text-sm ${color}`}>
+      {verdict.status === "exists" ? (
+        <div>
+          Valor candidato: <span className="font-mono">{(verdict.value ?? NaN).toPrecision?.(6) ?? "n/a"}</span>
+          {typeof verdict.spread === "number" ? <span className="ml-2 text-xs text-gray-400">spread: {verdict.spread}</span> : null}
         </div>
-
-        <Tabs defaultValue="paths" className="mt-2">
-          <TabsList>
-            <TabsTrigger value="paths"><LineChart className="w-4 h-4 mr-1" />Rutas</TabsTrigger>
-            <TabsTrigger value="polar">Polar</TabsTrigger>
-            <TabsTrigger value="tolerances"><Wand2 className="w-4 h-4 mr-1" />Tolerancias</TabsTrigger>
-          </TabsList>
-
-          {/* Rutas mixtas */}
-          <TabsContent value="paths" className="space-y-3 mt-3">
-            <div>
-              <Label>Niveles (r)</Label>
-              <Slider value={[levels]} onValueChange={(val: number[]) => setLevels(Math.round(val[0]))} min={3} max={12} step={1} />
-              <div className="text-xs text-muted-foreground">{levels} niveles</div>
-            </div>
-            <div>
-              <Label>Base geométrica</Label>
-              <Slider value={[base]} onValueChange={(val: number[]) => setBase(Number(val[0].toFixed(2)))} min={0.05} max={0.5} step={0.01} />
-              <div className="text-xs text-muted-foreground">rᵢ = base^(i)</div>
-            </div>
-            <div>
-              <Label>Rectas (θ)</Label>
-              <Slider value={[thetaCount]} onValueChange={(val: number[]) => setThetaCount(Math.round(val[0]))} min={4} max={24} step={1} />
-              <div className="text-xs text-muted-foreground">{thetaCount} direcciones</div>
-            </div>
-            <div>
-              <Label>Parábolas k</Label>
-              <Input value={kList} onChange={(e) => setKList(e.target.value)} />
-            </div>
-            <div>
-              <Label>Curvas aleatorias</Label>
-              <Slider value={[randCount]} onValueChange={(val: number[]) => setRandCount(Math.round(val[0]))} min={0} max={6} step={1} />
-              <div className="text-xs text-muted-foreground">{randCount} curvas</div>
-            </div>
-          </TabsContent>
-
-          {/* NUEVO: Panel polar */}
-          <TabsContent value="polar" className="space-y-3 mt-3">
-            <div>
-              <Label>Ángulos (θ)</Label>
-              <Slider value={[thetaN]} onValueChange={(val: number[]) => setThetaN(Math.round(val[0]))} min={8} max={72} step={1} />
-              <div className="text-xs text-muted-foreground">{thetaN} direcciones en [0, 2π)</div>
-            </div>
-            <div>
-              <Label>Desfase inicial θ₀ (radianes)</Label>
-              <Slider value={[thetaStart]} onValueChange={(val: number[]) => setThetaStart(Number(val[0].toFixed(2)))} min={0} max={Math.PI * 2} step={0.01} />
-              <div className="text-xs text-muted-foreground">θ comienza en {thetaStart.toFixed(2)} rad</div>
-            </div>
-            <div className="rounded border p-2">
-              <div className="text-sm font-medium mb-2">Resultados por θ</div>
-              <div className="max-h-56 overflow-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-muted sticky top-0">
-                    <tr>
-                      <th className="text-left p-2">θ (rad)</th>
-                      <th className="text-left p-2">Últimos valores</th>
-                      <th className="text-left p-2">≈ Límite(θ)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {polar.rows.map((r, i) => (
-                      <tr key={i} className="border-t">
-                        <td className="p-2">{r.theta.toFixed(3)}</td>
-                        <td className="p-2 font-mono text-xs">
-                          {r.last.length ? r.last.map((v) => Number(v).toExponential(2)).join(", ") : <span className="text-muted-foreground">n/a</span>}
-                        </td>
-                        <td className="p-2">{Number.isFinite(r.limit ?? NaN) ? Number(r.limit).toPrecision(6) : <span className="text-muted-foreground">–</span>}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Veredicto polar */}
-              <div className="mt-3 text-sm">
-                {polar.verdict.status === "polar-undetermined" && (
-                  <div className="flex items-start gap-2 text-amber-700">
-                    <AlertCircle className="w-4 h-4 mt-0.5" />
-                    <span>No concluyente: aumenta niveles o reduce la base.</span>
-                  </div>
-                )}
-                {polar.verdict.status === "polar-consistent" && (
-                  <div className="rounded-md border p-2 bg-emerald-50 text-emerald-900">
-                    Coincidencia por θ: L ≈ {polar.verdict.value.toPrecision(6)} (disp máx: {polar.verdict.spread.toExponential(2)} ≤ {tol})
-                  </div>
-                )}
-                {polar.verdict.status === "polar-inconsistent" && (
-                  <div className="rounded-md border p-2 bg-rose-50 text-rose-900">
-                    Inconsistencia por θ: límites entre {polar.verdict.min.toPrecision(6)} y {polar.verdict.max.toPrecision(6)}.
-                  </div>
-                )}
-              </div>
-            </div>
-          </TabsContent>
-
-          {/* Tolerancias */}
-          <TabsContent value="tolerances" className="space-y-3 mt-3">
-            <div>
-              <Label>Tail para convergencia</Label>
-              <Slider value={[tail]} onValueChange={(val: number[]) => setTail(Math.round(val[0]))} min={2} max={8} step={1} />
-              <div className="text-xs text-muted-foreground">Se observan los últimos {tail} valores por ruta</div>
-            </div>
-            <div>
-              <Label>Tolerancia (ruta &amp; global)</Label>
-              <Input type="number" value={tol} onChange={(e) => setTol(parseFloat(e.target.value))} />
-              <div className="text-xs text-muted-foreground">Si la dispersión ≤ tolerancia, aceptamos mismo límite</div>
-            </div>
-          </TabsContent>
-        </Tabs>
-
-        {/* ε–δ */}
-        <div className="pt-2 grid grid-cols-2 gap-3">
-          <div>
-            <Label>ε (epsilon)</Label>
-            <Input type="number" value={epsilon} onChange={(e) => setEpsilon(parseFloat(e.target.value))} />
-          </div>
-          <div>
-            <Label>δ (delta)</Label>
-            <Input type="number" value={delta} onChange={(e) => setDelta(parseFloat(e.target.value))} />
-          </div>
-        </div>
-        <div className="text-sm mt-1">
-          {probe.ok ? (
-            <span className="text-green-600">Para este δ, la variación máx (~{probe.maxVar.toExponential(2)}) está por debajo de ε.</span>
-          ) : (
-            <span className="text-amber-600">Para este δ, la variación máx (~{probe.maxVar.toExponential(2)}) supera ε.</span>
-          )}
-        </div>
-      </Card>
-
-      {/* Resultados (rutas mixtas) */}
-      <Card className="p-4 space-y-4">
-        <h3 className="text-lg font-semibold">Resultado (rutas mixtas)</h3>
-        <VerdictView verdict={result.verdict} tol={tol} />
-
-        <div className="space-y-2">
-          <h4 className="font-medium">Rutas evaluadas</h4>
-          <div className="max-h-72 overflow-auto rounded border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted sticky top-0">
-                <tr>
-                  <th className="text-left p-2">Ruta</th>
-                  <th className="text-left p-2">Últimos valores</th>
-                  <th className="text-left p-2">≈ Límite (ruta)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {result.paths.map((p, i) => {
-                  const tailVals = p.values.filter(Number.isFinite).slice(-tail);
-                  return (
-                    <tr key={i} className="border-t">
-                      <td className="p-2 align-top">{p.label}</td>
-                      <td className="p-2 align-top font-mono text-xs">
-                        {tailVals.length ? tailVals.map((v) => Number(v).toExponential(2)).join(", ") : <span className="text-muted-foreground">n/a</span>}
-                      </td>
-                      <td className="p-2 align-top">
-                        {Number.isFinite(p.convergesTo ?? NaN) ? Number(p.convergesTo).toPrecision(6) : <span className="text-muted-foreground">–</span>}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-
-        <div className="text-xs text-muted-foreground">
-          Nota: Verificación <strong>numérica</strong> por múltiples rutas. Si detecta rutas con límites distintos, reporta contraejemplo. Si todas coinciden dentro de la tolerancia, sugiere un valor candidato.
-        </div>
-      </Card>
+      ) : verdict.status === "diverges" ? (
+        <div>Detectado comportamiento divergente entre rutas</div>
+      ) : (
+        <div>Resultado inconcluso</div>
+      )}
     </div>
   );
 }
 
-function VerdictView({ verdict, tol }: { verdict: ReturnType<typeof globalVerdict>; tol: number }) {
-  if (verdict.status === "undetermined") {
-    return (
-      <div className="flex items-start gap-2 text-amber-700">
-        <AlertCircle className="w-5 h-5 mt-0.5" />
-        <div>
-          <div className="font-medium">No concluyente</div>
-          <div className="text-sm">Intenta aumentar niveles, ajustar tolerancia o añadir más rutas.</div>
+/* Componente auxiliar: panel separado para "Resultado (rutas mixtas)" */
+function MixedRoutesResults({ compiled, x0, y0 }: { compiled: any; x0: number; y0: number }) {
+  const result = useMemo(() => {
+    if (!compiled) {
+      return { verdict: { status: "inconclusive" } as Verdict, paths: [] as PathSample[] };
+    }
+    const paths = computeMixedPaths(compiled, x0, y0);
+    // calculo sencillo del veredicto global
+    const convValues = paths.map((p) => p.convergesTo).filter(Number.isFinite) as number[];
+    const spreadAll = convValues.length ? Math.max(...convValues) - Math.min(...convValues) : Infinity;
+    const verdict: Verdict = spreadAll < 1e-3 ? { status: "exists", value: convValues[0], spread: spreadAll } : { status: "inconclusive" };
+    return { verdict, paths };
+  }, [compiled, x0, y0]);
+
+  return (
+    <Card className="p-4 bg-gray-900 border border-gray-800 rounded-lg w-full">
+      <h3 className="text-lg font-semibold text-blue-400 mb-3">Resultado (rutas mixtas)</h3>
+
+      <VerdictView verdict={result.verdict} tol={1e-3} />
+
+      <div className="mt-3">
+        <h4 className="font-medium text-gray-100 mb-2">Rutas evaluadas</h4>
+        <div className="rounded border border-gray-800 bg-gray-800/40 max-h-[320px] overflow-y-auto p-2">
+          <table className="w-full text-sm text-gray-100">
+            <thead className="sticky top-0 bg-gray-800/60">
+              <tr>
+                <th className="text-left p-2">Ruta</th>
+                <th className="text-left p-2">Últimos valores</th>
+                <th className="text-left p-2">≈ Límite (ruta)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {result.paths.map((p, i) => {
+                const tailVals = p.values.filter(Number.isFinite).slice(-3);
+                return (
+                  <tr key={i} className="border-t border-gray-800/60">
+                    <td className="p-2 align-top">{p.label}</td>
+                    <td className="p-2 align-top font-mono text-xs">
+                      {tailVals.length ? tailVals.map((v) => Number(v).toExponential(2)).join(", ") : <span className="text-gray-500">n/a</span>}
+                    </td>
+                    <td className="p-2 align-top">
+                      {Number.isFinite(p.convergesTo ?? NaN) ? Number(p.convergesTo!).toPrecision(6) : <span className="text-gray-500">–</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+              {result.paths.length === 0 && (
+                <tr>
+                  <td colSpan={3} className="p-3 text-center text-gray-500">
+                    No hay rutas evaluadas aún
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
-    );
-  }
-  if (verdict.status === "exists") {
-    return (
-      <div className="rounded-xl border p-3 bg-emerald-50">
-        <div className="text-sm">Todas las rutas convergen (disp. ≤ {tol}).</div>
-        <div className="text-xl font-semibold">Límite ≈ {verdict.value?.toPrecision(6)}</div>
-        <div className="text-xs text-muted-foreground">Dispersión máxima entre rutas: {verdict.spread?.toExponential(2)}</div>
+
+      <div className="text-xs text-gray-400 mt-3">
+        Nota: verificación numérica por múltiples rutas. Reemplaza el cálculo por tus datos reales si ya existen.
       </div>
-    );
-  }
+    </Card>
+  );
+}
+
+export type LimitsExplorerProps = {
+  functionExpr?: string;
+  onPointChange?: (p: { x: number; y: number } | null) => void;
+};
+
+export default function LimitsExplorer({ functionExpr: initialExpr = "sin(x) * cos(y)", onPointChange }: LimitsExplorerProps) {
+  const [expr, setExpr] = useState(initialExpr);
+  const [x0, setX0] = useState(0);
+  const [y0, setY0] = useState(0);
+
+  const compiled = useMemo(() => {
+    const c = safeCompile(expr);
+    return c;
+  }, [expr]);
+
+  // ejemplo sencillo: cuando cambia el punto informamos al padre
+  useEffect(() => {
+    onPointChange?.({ x: x0, y: y0 });
+  }, [x0, y0, onPointChange]);
+
   return (
-    <div className="rounded-xl border p-3 bg-rose-50">
-      <div className="font-semibold">Contraejemplo numérico</div>
-      <div className="text-sm">Se hallaron rutas con límites incompatibles:</div>
-      <ul className="list-disc pl-6 text-sm mt-1">
-        {verdict.pairs?.slice(0, 6).map((p, i) => (
-          <li key={i}>
-            <span className="font-mono">{p.label}</span>: {Number.isFinite(p.value) ? Number(p.value).toPrecision(6) : "n/a"}
-          </li>
-        ))}
-      </ul>
-      <div className="text-xs text-muted-foreground mt-2">Si alguna ruta es inestable, intenta reducir la base geométrica o aumentar niveles.</div>
+    <div className="space-y-6">
+      {/* Panel Límite en (x0,y0) */}
+      <Card className="p-4 bg-gray-900 border border-gray-800 rounded-lg">
+        <h2 className="text-lg font-semibold text-blue-400 mb-4">Σ Límite en (x0,y0)</h2>
+
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div>
+            <label className="block text-sm text-gray-300 mb-1">f(x,y)</label>
+            <input
+              className="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2"
+              value={expr}
+              onChange={(e) => setExpr(e.target.value)}
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-sm text-gray-300">x0</label>
+              <input
+                type="number"
+                className="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2"
+                value={x0}
+                onChange={(e) => setX0(Number(e.target.value))}
+              />
+            </div>
+            <div>
+              <label className="text-sm text-gray-300">y0</label>
+              <input
+                type="number"
+                className="w-full bg-gray-800 border border-gray-700 text-gray-100 rounded px-3 py-2"
+                value={y0}
+                onChange={(e) => setY0(Number(e.target.value))}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Aquí podrías agregar controles de rutas / tolerancias */}
+      </Card>
+
+      {/* Panel de Resultado (rutas mixtas) colocado debajo del panel de límite */}
+      <div>
+        <MixedRoutesResults compiled={compiled} x0={x0} y0={y0} />
+      </div>
+
+      {/* Otros paneles opcionales */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="p-4 bg-gray-900 border border-gray-800 rounded-lg">
+          <h3 className="text-blue-400 font-semibold mb-2">Rutas / Polar</h3>
+          <p className="text-sm text-gray-400">Controles y opciones para generar rutas (rectas, parábolas, aleatorias)</p>
+        </Card>
+
+        <Card className="p-4 bg-gray-900 border border-gray-800 rounded-lg">
+          <h3 className="text-blue-400 font-semibold mb-2">Tolerancias</h3>
+          <p className="text-sm text-gray-400">Ajusta tolerancias ε / δ y parámetros de verificación</p>
+        </Card>
+      </div>
     </div>
   );
 }

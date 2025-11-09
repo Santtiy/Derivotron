@@ -1,138 +1,129 @@
-"use client"
+"use client";
 
-import { useState, useEffect } from "react"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Card } from "@/components/ui/card"
-import * as math from "mathjs"
+import React, { useState, useMemo } from "react";
+import { create, all } from "mathjs";
+import { Card } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { gradientAt } from "../lib/derivatives";
+import { analyzeDomainAndRange } from "../lib/domain-range";
 
-interface DerivativesCalculatorProps {
-  functionExpr: string
-}
+const math = create(all);
 
-export function DerivativesCalculator({ functionExpr }: DerivativesCalculatorProps) {
-  const [x, setX] = useState("0")
-  const [y, setY] = useState("0")
-  const [results, setResults] = useState<{
-    fx: string
-    fy: string
-    fxValue: number | null
-    fyValue: number | null
-    gradient: string
-    gradientMagnitude: number | null
-  } | null>(null)
+/* ===========================================================
+   COMPONENTE PRINCIPAL: DerivativesCalculator
+   =========================================================== */
+export default function DerivativesCalculator({
+  functionExpr = "x^2 + y^2",
+  initialPoint = { x: 0, y: 0 },
+}: {
+  functionExpr?: string;
+  initialPoint?: { x: number; y: number };
+}) {
+  const [expr, setExpr] = useState<string>(functionExpr);
+  const [point, setPoint] = useState<{ x: number; y: number }>(initialPoint);
 
-  const calculate = () => {
+  const compiled = useMemo(() => {
     try {
-      const xVal = Number.parseFloat(x)
-      const yVal = Number.parseFloat(y)
-
-      if (isNaN(xVal) || isNaN(yVal)) {
-        return
-      }
-
-      // Calculate partial derivatives numerically
-      const h = 0.0001
-      const compiledExpr = math.compile(functionExpr)
-
-      const f = (xv: number, yv: number) => {
-        try {
-          return compiledExpr.evaluate({ x: xv, y: yv }) as number
-        } catch {
-          return 0
-        }
-      }
-
-      // Partial derivative with respect to x
-      const fxValue = (f(xVal + h, yVal) - f(xVal - h, yVal)) / (2 * h)
-
-      // Partial derivative with respect to y
-      const fyValue = (f(xVal, yVal + h) - f(xVal, yVal - h)) / (2 * h)
-
-      // Gradient magnitude
-      const gradientMagnitude = Math.sqrt(fxValue ** 2 + fyValue ** 2)
-
-      setResults({
-        fx: "∂f/∂x",
-        fy: "∂f/∂y",
-        fxValue: isFinite(fxValue) ? fxValue : null,
-        fyValue: isFinite(fyValue) ? fyValue : null,
-        gradient: `∇f = (${fxValue.toFixed(4)}, ${fyValue.toFixed(4)})`,
-        gradientMagnitude: isFinite(gradientMagnitude) ? gradientMagnitude : null,
-      })
-    } catch (error) {
-      console.error("[v0] Error calculating derivatives:", error)
+      return math.compile(expr);
+    } catch {
+      return null;
     }
-  }
+  }, [expr]);
 
-  useEffect(() => {
-    calculate()
-  }, [functionExpr, x, y])
+  const evalFn = useMemo(() => {
+    if (!compiled) return null;
+    return (x: number, y: number) => Number(compiled.evaluate({ x, y }));
+  }, [compiled]);
+
+  const gradient = useMemo(() => {
+    if (!evalFn) return null;
+    return gradientAt(evalFn, point.x, point.y);
+  }, [evalFn, point]);
+
+  const scan = useMemo(
+    () => evalFn ? analyzeDomainAndRange(evalFn, -5, 5, -5, 5, 50, 50) : { range: null, invalidPoints: 0, total: 0 },
+    [evalFn]
+  );
 
   return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3">
-        <div className="space-y-2">
-          <Label htmlFor="x-point" className="text-xs">
-            Punto x
-          </Label>
-          <Input
-            id="x-point"
-            type="number"
-            step="0.1"
-            value={x}
-            onChange={(e) => setX(e.target.value)}
-            className="h-9"
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="y-point" className="text-xs">
-            Punto y
-          </Label>
-          <Input
-            id="y-point"
-            type="number"
-            step="0.1"
-            value={y}
-            onChange={(e) => setY(e.target.value)}
-            className="h-9"
-          />
-        </div>
-      </div>
+    <div className="space-y-6">
+      {/* Panel principal para ingresar f y punto */}
+      <Card className="p-4 bg-gray-900 border-gray-800 rounded-lg">
+        <h2 className="text-lg font-semibold text-blue-400 mb-4">
+          Derivadas Parciales / Gradiente
+        </h2>
 
-      {results && (
-        <div className="space-y-3">
-          <Card className="bg-muted/50 p-4">
-            <div className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">{results.fx}:</span>
-                <span className="font-mono font-medium">
-                  {results.fxValue !== null ? results.fxValue.toFixed(4) : "N/A"}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">{results.fy}:</span>
-                <span className="font-mono font-medium">
-                  {results.fyValue !== null ? results.fyValue.toFixed(4) : "N/A"}
-                </span>
-              </div>
-            </div>
-          </Card>
+        <div className="grid gap-3">
+          <div>
+            <Label>f(x,y)</Label>
+            <Input
+              value={expr}
+              onChange={(e) => setExpr(e.target.value)}
+              placeholder="Ej: x^2 + y^2"
+            />
+          </div>
 
-          <Card className="bg-primary/10 p-4">
-            <div className="space-y-2">
-              <div className="text-xs font-medium text-muted-foreground">Gradiente</div>
-              <div className="font-mono text-sm">{results.gradient}</div>
-              <div className="flex justify-between text-xs">
-                <span className="text-muted-foreground">Magnitud:</span>
-                <span className="font-mono font-medium">
-                  {results.gradientMagnitude !== null ? results.gradientMagnitude.toFixed(4) : "N/A"}
-                </span>
-              </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label>x₀</Label>
+              <Input
+                type="number"
+                value={point.x}
+                onChange={(e) =>
+                  setPoint((p) => ({ ...p, x: parseFloat(e.target.value) }))
+                }
+              />
             </div>
-          </Card>
+            <div>
+              <Label>y₀</Label>
+              <Input
+                type="number"
+                value={point.y}
+                onChange={(e) =>
+                  setPoint((p) => ({ ...p, y: parseFloat(e.target.value) }))
+                }
+              />
+            </div>
+          </div>
         </div>
-      )}
+      </Card>
+
+      {/* Panel de resultados del gradiente */}
+      <Card className="p-4 bg-gray-900 border-gray-800 rounded-lg">
+        <div className="grid grid-cols-3 gap-4">
+          <div>
+            <label className="text-sm text-gray-400">∂f/∂x</label>
+            <div className="font-mono text-lg text-gray-100">
+              {gradient ? gradient.dfdx.toPrecision(6) : "—"}
+            </div>
+          </div>
+          <div>
+            <label className="text-sm text-gray-400">∂f/∂y</label>
+            <div className="font-mono text-lg text-gray-100">
+              {gradient ? gradient.dfdy.toPrecision(6) : "—"}
+            </div>
+          </div>
+          <div>
+            <label className="text-sm text-gray-400">||∇f||</label>
+            <div className="font-mono text-lg text-gray-100">
+              {gradient ? gradient.mag.toPrecision(6) : "—"}
+            </div>
+          </div>
+        </div>
+
+        <div className="text-xs text-gray-400 mt-3">
+          Evaluado en:{" "}
+          <span className="font-mono">
+            ({point.x.toPrecision(3)}, {point.y.toPrecision(3)})
+          </span>
+        </div>
+
+        <div className="mt-4 text-xs text-gray-400">
+          Rango estimado (malla 50x50): {scan.range ? `${scan.range.min.toPrecision(4)} a ${scan.range.max.toPrecision(4)}` : "—"} ·
+          Puntos inválidos: {scan.invalidPoints}/{scan.total}
+        </div>
+      </Card>
     </div>
-  )
+  );
 }
