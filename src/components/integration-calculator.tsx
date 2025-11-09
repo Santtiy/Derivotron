@@ -1,21 +1,20 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
-import Plot from "react-plotly.js";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import React, { useMemo, useState, useCallback } from "react";
 import { create, all } from "mathjs";
+import { Card } from "./ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { Label } from "./ui/label";
+import { Input } from "./ui/input";
+import { Button } from "./ui/button";
+import { doubleIntegral, typeIIntegral, typeIIIntegral, tripleIntegral } from "../lib/integrate";
+import { centerOfMass2D } from "../lib/center-mass";
 
-const math = create(all, { number: "number" });
+const math = create(all, { number: "number", precision: 64 });
 
 interface IntegrationCalculatorProps {
   functionExpr: string; // f(x,y)
 }
-
-type RegionMask = (x: number, y: number) => boolean;
 
 function compileSafe(expr: string) {
   try {
@@ -25,450 +24,154 @@ function compileSafe(expr: string) {
   }
 }
 
-function evalSafe(compiled: any, scope: Record<string, number>) {
-  if (!compiled) return NaN;
-  try {
-    const v = compiled.evaluate({ ...scope, e: Math.E, pi: Math.PI });
-    return Number.isFinite(v) ? Number(v) : NaN;
-  } catch {
-    return NaN;
-  }
-}
-
-function linspace(a: number, b: number, n: number) {
-  if (n <= 1) return [a];
-  const h = (b - a) / (n - 1);
-  return Array.from({ length: n }, (_, i) => a + i * h);
-}
-
-/** Integra g(t) en [a,b] con Simpson compuesto (si aplica) o trapecios */
-function integrate1D(g: (t: number) => number, a: number, b: number, n: number) {
-  if (n < 2) n = 2;
-  const xs = linspace(a, b, n);
-  const vals = xs.map(g);
-  if (vals.some((v) => !Number.isFinite(v))) return NaN;
-  const h = (b - a) / (n - 1);
-
-  // Si (n-1) es par y n>=3, usamos Simpson compuesto
-  if ((n - 1) % 2 === 0 && n >= 3) {
-    let s = vals[0] + vals[n - 1];
-    for (let i = 1; i < n - 1; i++) s += vals[i] * (i % 2 === 0 ? 2 : 4);
-    return (h / 3) * s;
-  }
-
-  // Si no, trapecios
-  let s = 0;
-  for (let i = 0; i < n - 1; i++) s += (vals[i] + vals[i + 1]) * 0.5;
-  return h * s;
-}
-
-/** Heatmap de la región en el plano xy */
-function regionHeatmap(mask: RegionMask, xMin: number, xMax: number, yMin: number, yMax: number, n = 140) {
-  const xs = linspace(xMin, xMax, n);
-  const ys = linspace(yMin, yMax, n);
-  const Z: number[][] = [];
-  for (let j = 0; j < ys.length; j++) {
-    const row: number[] = [];
-    for (let i = 0; i < xs.length; i++) {
-      row.push(mask(xs[i], ys[j]) ? 1 : NaN); // NaN -> no pinta fuera de región
+function evalFnFromExpr(expr: string) {
+  const compiled = compileSafe(expr);
+  return (x: number, y: number) => {
+    if (!compiled) return NaN;
+    try {
+      return Number(compiled.evaluate({ x, y }));
+    } catch {
+      return NaN;
     }
-    Z.push(row);
-  }
-  return { xs, ys, Z };
+  };
 }
 
-export function IntegrationCalculator({ functionExpr }: IntegrationCalculatorProps) {
-  // f(x,y) y densidad ρ(x,y)
-  const [rhoExpr, setRhoExpr] = useState<string>("1");
-  const fCompiled = useMemo(() => compileSafe(functionExpr), [functionExpr]);
-  const rhoCompiled = useMemo(() => compileSafe(rhoExpr), [rhoExpr]);
+export default function IntegrationCalculator({ functionExpr }: IntegrationCalculatorProps) {
+  const [tab, setTab] = useState<"rect" | "typeI" | "typeII" | "triple">("rect");
 
-  // Vista global para el plot 2D
-  const [view, setView] = useState({ xMin: -3, xMax: 3, yMin: -3, yMax: 3 });
+  // Rectangular
+  const [ax, setAx] = useState(-1);
+  const [bx, setBx] = useState(1);
+  const [cy, setCy] = useState(-1);
+  const [dy, setDy] = useState(1);
+  const [nx, setNx] = useState(200);
+  const [ny, setNy] = useState(200);
 
-  // Resolución (discretización)
-  const [nx, setNx] = useState<number>(200); // pasos eje externo
-  const [ny, setNy] = useState<number>(200); // pasos eje interno
+  // Tipo I: y ∈ [y1(x), y2(x)], x ∈ [xMinI, xMaxI]
+  const [xMinI, setXMinI] = useState(-1);
+  const [xMaxI, setXMaxI] = useState(1);
+  const [y1Expr, setY1Expr] = useState("x^2");
+  const [y2Expr, setY2Expr] = useState("1");
 
-  // ========================= TAB 1: Rectangular =========================
-  const [rect, setRect] = useState({ ax: -1, bx: 1, cy: -1, dy: 1 });
-  const maskRect: RegionMask = (x, y) => x >= rect.ax && x <= rect.bx && y >= rect.cy && y <= rect.dy;
+  // Tipo II: x ∈ [x1(y), x2(y)], y ∈ [yMinII, yMaxII]
+  const [yMinII, setYMinII] = useState(-1);
+  const [yMaxII, setYMaxII] = useState(1);
+  const [x1Expr, setX1Expr] = useState("-sqrt(1 - y^2)");
+  const [x2Expr, setX2Expr] = useState("sqrt(1 - y^2)");
 
-  const computeRect = () => {
-    const gx = (x: number) =>
-      integrate1D(
-        (y) => evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }),
-        rect.cy,
-        rect.dy,
-        ny
-      );
+  // Triple
+  const [zMin, setZMin] = useState(-1);
+  const [zMax, setZMax] = useState(1);
 
-    const mass = integrate1D(gx, rect.ax, rect.bx, nx);
-    if (!Number.isFinite(mass)) return { mass: NaN, cx: NaN, cy: NaN };
+  const [result, setResult] = useState<number | null>(null);
+  const [center, setCenter] = useState<{ x: number; y: number } | null>(null);
 
-    const Gx = integrate1D(
-      (x) =>
-        integrate1D(
-          (y) => x * evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }),
-          rect.cy,
-          rect.dy,
-          ny
-        ),
-      rect.ax,
-      rect.bx,
-      nx
-    );
-    const Gy = integrate1D(
-      (x) =>
-        integrate1D(
-          (y) => y * evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }),
-          rect.cy,
-          rect.dy,
-          ny
-        ),
-      rect.ax,
-      rect.bx,
-      nx
-    );
+  const f = useMemo(() => evalFnFromExpr(functionExpr), [functionExpr]);
 
-    return { mass, cx: Gx / mass, cy: Gy / mass };
-  };
+  const calcRect = useCallback(() => {
+    const val = doubleIntegral(f, ax, bx, cy, dy, Math.max(4, nx), Math.max(4, ny));
+    const massData = centerOfMass2D(f, ax, bx, cy, dy, Math.max(4, nx), Math.max(4, ny));
+    setResult(val);
+    setCenter({ x: massData.cx, y: massData.cy });
+  }, [f, ax, bx, cy, dy, nx, ny]);
 
-  // ========================= TAB 2: Tipo I (y∈[g1(x),g2(x)]) =========================
-  const [tipoI, setTipoI] = useState({
-    a: -1,
-    b: 1,
-    g1: "-sqrt(1 - x^2)",
-    g2: "sqrt(1 - x^2)",
-  });
-  const g1c = useMemo(() => compileSafe(tipoI.g1), [tipoI.g1]);
-  const g2c = useMemo(() => compileSafe(tipoI.g2), [tipoI.g2]);
+  const calcTypeI = useCallback(() => {
+    const y1c = compileSafe(y1Expr);
+    const y2c = compileSafe(y2Expr);
+    const y1 = (x: number) => (y1c ? Number(y1c.evaluate({ x })) : NaN);
+    const y2 = (x: number) => (y2c ? Number(y2c.evaluate({ x })) : NaN);
+    const val = typeIIntegral(f, xMinI, xMaxI, y1, y2, Math.max(4, nx), Math.max(4, ny));
+    setResult(val);
+  }, [f, xMinI, xMaxI, y1Expr, y2Expr, nx, ny]);
 
-  const maskTipoI: RegionMask = (x, y) => {
-    if (x < tipoI.a || x > tipoI.b) return false;
-    const y1 = evalSafe(g1c, { x });
-    const y2 = evalSafe(g2c, { x });
-    if (![y1, y2].every(Number.isFinite)) return false;
-    const lo = Math.min(y1, y2);
-    const hi = Math.max(y1, y2);
-    return y >= lo && y <= hi;
-  };
+  const calcTypeII = useCallback(() => {
+    const x1c = compileSafe(x1Expr);
+    const x2c = compileSafe(x2Expr);
+    const x1 = (y: number) => (x1c ? Number(x1c.evaluate({ y })) : NaN);
+    const x2 = (y: number) => (x2c ? Number(x2c.evaluate({ y })) : NaN);
+    const val = typeIIIntegral(f, yMinII, yMaxII, x1, x2, Math.max(4, nx), Math.max(4, ny));
+    setResult(val);
+  }, [f, yMinII, yMaxII, x1Expr, x2Expr, nx, ny]);
 
-  const computeTipoI = () => {
-    const gx = (x: number) => {
-      const y1 = evalSafe(g1c, { x });
-      const y2 = evalSafe(g2c, { x });
-      if (![y1, y2].every(Number.isFinite)) return NaN;
-      const lo = Math.min(y1, y2);
-      const hi = Math.max(y1, y2);
-      return integrate1D(
-        (y) => evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }),
-        lo,
-        hi,
-        ny
-      );
-    };
-
-    const mass = integrate1D(gx, tipoI.a, tipoI.b, nx);
-    if (!Number.isFinite(mass)) return { mass: NaN, cx: NaN, cy: NaN };
-
-    const Gx = integrate1D(
-      (x) => {
-        const y1 = evalSafe(g1c, { x });
-        const y2 = evalSafe(g2c, { x });
-        const lo = Math.min(y1, y2);
-        const hi = Math.max(y1, y2);
-        return integrate1D(
-          (y) => x * evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }),
-          lo,
-          hi,
-          ny
-        );
-      },
-      tipoI.a,
-      tipoI.b,
-      nx
-    );
-
-    const Gy = integrate1D(
-      (x) => {
-        const y1 = evalSafe(g1c, { x });
-        const y2 = evalSafe(g2c, { x });
-        const lo = Math.min(y1, y2);
-        const hi = Math.max(y1, y2);
-        return integrate1D(
-          (y) => y * evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }),
-          lo,
-          hi,
-          ny
-        );
-      },
-      tipoI.a,
-      tipoI.b,
-      nx
-    );
-
-    return { mass, cx: Gx / mass, cy: Gy / mass };
-  };
-
-  // ========================= TAB 3: Tipo II (x∈[h1(y),h2(y)]) =========================
-  const [tipoII, setTipoII] = useState({
-    c: -1,
-    d: 1,
-    h1: "-sqrt(1 - y^2)",
-    h2: "sqrt(1 - y^2)",
-  });
-  const h1c = useMemo(() => compileSafe(tipoII.h1), [tipoII.h1]);
-  const h2c = useMemo(() => compileSafe(tipoII.h2), [tipoII.h2]);
-
-  const maskTipoII: RegionMask = (x, y) => {
-    if (y < tipoII.c || y > tipoII.d) return false;
-    const x1 = evalSafe(h1c, { y });
-    const x2 = evalSafe(h2c, { y });
-    if (![x1, x2].every(Number.isFinite)) return false;
-    const lo = Math.min(x1, x2);
-    const hi = Math.max(x1, x2);
-    return x >= lo && x <= hi;
-  };
-
-  const computeTipoII = () => {
-    const gy = (y: number) => {
-      const x1 = evalSafe(h1c, { y });
-      const x2 = evalSafe(h2c, { y });
-      if (![x1, x2].every(Number.isFinite)) return NaN;
-      const lo = Math.min(x1, x2);
-      const hi = Math.max(x1, x2);
-      return integrate1D(
-        (x) => evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }),
-        lo,
-        hi,
-        nx
-      );
-    };
-
-    const mass = integrate1D(gy, tipoII.c, tipoII.d, ny);
-    if (!Number.isFinite(mass)) return { mass: NaN, cx: NaN, cy: NaN };
-
-    const Gx = integrate1D(
-      (y) => {
-        const x1 = evalSafe(h1c, { y });
-        const x2 = evalSafe(h2c, { y });
-        const lo = Math.min(x1, x2);
-        const hi = Math.max(x1, x2);
-        return integrate1D(
-          (x) => x * evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }),
-          lo,
-          hi,
-          nx
-        );
-      },
-      tipoII.c,
-      tipoII.d,
-      ny
-    );
-
-    const Gy = integrate1D(
-      (y) => {
-        const x1 = evalSafe(h1c, { y });
-        const x2 = evalSafe(h2c, { y });
-        const lo = Math.min(x1, x2);
-        const hi = Math.max(x1, x2);
-        return integrate1D(
-          (x) => y * evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }),
-          lo,
-          hi,
-          nx
-        );
-      },
-      tipoII.c,
-      tipoII.d,
-      ny
-    );
-
-    return { mass, cx: Gx / mass, cy: Gy / mass };
-  };
-
-  // ========================= TAB 4: Polares =========================
-  const [polar, setPolar] = useState({
-    alpha: 0,
-    beta: 2 * Math.PI,
-    r1: "0",
-    r2: "1",
-  });
-  const r1c = useMemo(() => compileSafe(polar.r1), [polar.r1]);
-  const r2c = useMemo(() => compileSafe(polar.r2), [polar.r2]);
-
-  const maskPolar: RegionMask = (x, y) => {
-    const theta = Math.atan2(y, x);
-    const r = Math.hypot(x, y);
-    const a = polar.alpha;
-    const b = polar.beta;
-    const withinTheta = a <= b ? theta >= a && theta <= b : theta >= a || theta <= b;
-    if (!withinTheta) return false;
-    const rmin = evalSafe(r1c, { theta });
-    const rmax = evalSafe(r2c, { theta });
-    if (![rmin, rmax].every(Number.isFinite)) return false;
-    const lo = Math.min(rmin, rmax);
-    const hi = Math.max(rmin, rmax);
-    return r >= lo && r <= hi;
-  };
-
-  const computePolar = () => {
-    const gtheta = (theta: number) => {
-      const rmin = evalSafe(r1c, { theta });
-      const rmax = evalSafe(r2c, { theta });
-      if (![rmin, rmax].every(Number.isFinite)) return NaN;
-      const lo = Math.min(rmin, rmax);
-      const hi = Math.max(rmin, rmax);
-      return integrate1D(
-        (r) => {
-          const x = r * Math.cos(theta);
-          const y = r * Math.sin(theta);
-          return evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }) * r; // Jacobiano r
-        },
-        lo,
-        hi,
-        nx
-      );
-    };
-
-    const mass = integrate1D(gtheta, polar.alpha, polar.beta, ny);
-    if (!Number.isFinite(mass)) return { mass: NaN, cx: NaN, cy: NaN };
-
-    const Gx = integrate1D(
-      (theta) => {
-        const rmin = evalSafe(r1c, { theta });
-        const rmax = evalSafe(r2c, { theta });
-        const lo = Math.min(rmin, rmax);
-        const hi = Math.max(rmin, rmax);
-        return integrate1D(
-          (r) => {
-            const x = r * Math.cos(theta);
-            const y = r * Math.sin(theta);
-            return x * evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }) * r;
-          },
-          lo,
-          hi,
-          nx
-        );
-      },
-      polar.alpha,
-      polar.beta,
-      ny
-    );
-
-    const Gy = integrate1D(
-      (theta) => {
-        const rmin = evalSafe(r1c, { theta });
-        const rmax = evalSafe(r2c, { theta });
-        const lo = Math.min(rmin, rmax);
-        const hi = Math.max(rmin, rmax);
-        return integrate1D(
-          (r) => {
-            const x = r * Math.cos(theta);
-            const y = r * Math.sin(theta);
-            return y * evalSafe(fCompiled, { x, y }) * evalSafe(rhoCompiled, { x, y }) * r;
-          },
-          lo,
-          hi,
-          nx
-        );
-      },
-      polar.alpha,
-      polar.beta,
-      ny
-    );
-
-    return { mass, cx: Gx / mass, cy: Gy / mass };
-  };
-
-  // ========================= Visual común =========================
-  const [activeTab, setActiveTab] = useState<"rect" | "tipoI" | "tipoII" | "polar">("rect");
-
-  const currentMask: RegionMask = useMemo(() => {
-    switch (activeTab) {
-      case "rect":
-        return maskRect;
-      case "tipoI":
-        return maskTipoI;
-      case "tipoII":
-        return maskTipoII;
-      case "polar":
-        return maskPolar;
-    }
-  }, [activeTab, maskRect, maskTipoI, maskTipoII, maskPolar]);
-
-  const heat = useMemo(
-    () => regionHeatmap(currentMask, view.xMin, view.xMax, view.yMin, view.yMax, 140),
-    [currentMask, view]
-  );
-
-  // ========================= Resultado =========================
-  const [result, setResult] = useState<{ mass: number; cx: number; cy: number } | null>(null);
-
-  const runCompute = () => {
-    let out = { mass: NaN, cx: NaN, cy: NaN };
-    if (activeTab === "rect") out = computeRect();
-    if (activeTab === "tipoI") out = computeTipoI();
-    if (activeTab === "tipoII") out = computeTipoII();
-    if (activeTab === "polar") out = computePolar();
-    setResult(out);
-  };
   return (
-    <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)} className="w-full">
-      {/* Panel de parámetros */}
-      <TabsList className="grid w-full grid-cols-4">
-        <TabsTrigger value="rect" className="text-xs">Rectangular</TabsTrigger>
-        <TabsTrigger value="tipoI" className="text-xs">Tipo I</TabsTrigger>
-        <TabsTrigger value="tipoII" className="text-xs">Tipo II</TabsTrigger>
-        <TabsTrigger value="polar" className="text-xs">Polares</TabsTrigger>
-      </TabsList>
+    <Card className="p-4 bg-gray-900 border border-gray-800 rounded-lg">
+      <h3 className="text-blue-400 font-semibold mb-3">Integración de {functionExpr}</h3>
 
-      <TabsContent value="rect" className="space-y-4">
-        <Card className="p-4 space-y-3">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div><Label>ax</Label><Input type="number" value={rect.ax} onChange={(e) => setRect({ ...rect, ax: parseFloat(e.target.value) })} /></div>
-            <div><Label>bx</Label><Input type="number" value={rect.bx} onChange={(e) => setRect({ ...rect, bx: parseFloat(e.target.value) })} /></div>
-            <div><Label>cy</Label><Input type="number" value={rect.cy} onChange={(e) => setRect({ ...rect, cy: parseFloat(e.target.value) })} /></div>
-            <div><Label>dy</Label><Input type="number" value={rect.dy} onChange={(e) => setRect({ ...rect, dy: parseFloat(e.target.value) })} /></div>
+      <Tabs value={tab} onValueChange={(v) => setTab(v as any)}>
+        <TabsList className="mb-3">
+          <TabsTrigger value="rect">Rectangular</TabsTrigger>
+          <TabsTrigger value="typeI">Tipo I</TabsTrigger>
+          <TabsTrigger value="typeII">Tipo II</TabsTrigger>
+          <TabsTrigger value="triple" className="text-xs text-gray-100">Triple</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="rect">
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>ax</Label><Input type="number" value={ax} onChange={(e)=>setAx(Number(e.target.value))}/></div>
+            <div><Label>bx</Label><Input type="number" value={bx} onChange={(e)=>setBx(Number(e.target.value))}/></div>
+            <div><Label>cy</Label><Input type="number" value={cy} onChange={(e)=>setCy(Number(e.target.value))}/></div>
+            <div><Label>dy</Label><Input type="number" value={dy} onChange={(e)=>setDy(Number(e.target.value))}/></div>
+            <div><Label>nx</Label><Input type="number" value={nx} onChange={(e)=>setNx(Number(e.target.value))}/></div>
+            <div><Label>ny</Label><Input type="number" value={ny} onChange={(e)=>setNy(Number(e.target.value))}/></div>
           </div>
-        </Card>
-      </TabsContent>
+          <div className="mt-3 flex items-center gap-2">
+            <Button onClick={calcRect}>Calcular</Button>
+            <div className="text-sm text-gray-300">Resultado: <span className="font-mono">{result !== null ? result.toPrecision(8) : "—"}</span></div>
+          </div>
+          {center && <div className="text-xs text-gray-400">Centro de masa ≈ ({center.x.toPrecision(4)}, {center.y.toPrecision(4)})</div>}
+        </TabsContent>
 
-      <div className="w-full h-[360px]">
-        <Plot
-          data={[
-            {
-              type: "heatmap",
-              x: heat.xs,
-              y: heat.ys,
-              z: heat.Z,
-              showscale: false,
-              colorscale: ["rgba(56,189,248,0)", "rgba(56,189,248,0.35)"],
-              hoverinfo: "skip",
-            } as any,
-            {
-              type: "contour",
-              x: heat.xs,
-              y: heat.ys,
-              z: heat.Z.map((row) => row.map((v) => (Number.isFinite(v) ? 1 : 0))),
-              showscale: false,
-              contours: { coloring: "lines", showlabels: false, start: 0.5, end: 0.5, size: 1 },
-              line: { width: 2 },
-              hoverinfo: "skip",
-            } as any,
-          ]}
-          layout={{
-            margin: { l: 20, r: 10, t: 10, b: 30 },
-            paper_bgcolor: "rgba(0,0,0,0)",
-            plot_bgcolor: "rgba(0,0,0,0)",
-            xaxis: { title: { text: "x" }, zeroline: true },
-            yaxis: { title: { text: "y" }, zeroline: true, scaleanchor: "x", scaleratio: 1 },
-          }}
-          config={{ displayModeBar: false, responsive: true }}
-          style={{ width: "100%", height: "100%" }}
-        />
-      </div>
-    </Tabs>
+        <TabsContent value="typeI">
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>x min</Label><Input type="number" value={xMinI} onChange={(e)=>setXMinI(Number(e.target.value))}/></div>
+            <div><Label>x max</Label><Input type="number" value={xMaxI} onChange={(e)=>setXMaxI(Number(e.target.value))}/></div>
+            <div className="col-span-2"><Label>y1(x)</Label><Input value={y1Expr} onChange={(e)=>setY1Expr(e.target.value)}/></div>
+            <div className="col-span-2"><Label>y2(x)</Label><Input value={y2Expr} onChange={(e)=>setY2Expr(e.target.value)}/></div>
+            <div><Label>nx</Label><Input type="number" value={nx} onChange={(e)=>setNx(Number(e.target.value))}/></div>
+            <div><Label>ny</Label><Input type="number" value={ny} onChange={(e)=>setNy(Number(e.target.value))}/></div>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <Button onClick={calcTypeI}>Calcular</Button>
+            <div className="text-sm text-gray-300">Resultado: <span className="font-mono">{result !== null ? result.toPrecision(8) : "—"}</span></div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="typeII">
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>y min</Label><Input type="number" value={yMinII} onChange={(e)=>setYMinII(Number(e.target.value))}/></div>
+            <div><Label>y max</Label><Input type="number" value={yMaxII} onChange={(e)=>setYMaxII(Number(e.target.value))}/></div>
+            <div className="col-span-2"><Label>x1(y)</Label><Input value={x1Expr} onChange={(e)=>setX1Expr(e.target.value)}/></div>
+            <div className="col-span-2"><Label>x2(y)</Label><Input value={x2Expr} onChange={(e)=>setX2Expr(e.target.value)}/></div>
+            <div><Label>nx</Label><Input type="number" value={nx} onChange={(e)=>setNx(Number(e.target.value))}/></div>
+            <div><Label>ny</Label><Input type="number" value={ny} onChange={(e)=>setNy(Number(e.target.value))}/></div>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <Button onClick={calcTypeII}>Calcular</Button>
+            <div className="text-sm text-gray-300">Resultado: <span className="font-mono">{result !== null ? result.toPrecision(8) : "—"}</span></div>
+          </div>
+        </TabsContent>
+
+        <TabsContent value="triple">
+          <div className="grid grid-cols-2 gap-3">
+            <div><Label>x min</Label><Input type="number" value={ax} onChange={e=>setAx(+e.target.value)}/></div>
+            <div><Label>x max</Label><Input type="number" value={bx} onChange={e=>setBx(+e.target.value)}/></div>
+            <div><Label>y min</Label><Input type="number" value={cy} onChange={e=>setCy(+e.target.value)}/></div>
+            <div><Label>y max</Label><Input type="number" value={dy} onChange={e=>setDy(+e.target.value)}/></div>
+            <div><Label>z min</Label><Input type="number" value={zMin} onChange={e=>setZMin(+e.target.value)}/></div>
+            <div><Label>z max</Label><Input type="number" value={zMax} onChange={e=>setZMax(+e.target.value)}/></div>
+            <div><Label>n</Label><Input type="number" value={nx} onChange={e=>setNx(+e.target.value)}/></div>
+            <div><Label>m</Label><Input type="number" value={ny} onChange={e=>setNy(+e.target.value)}/></div>
+          </div>
+          <div className="mt-3 flex items-center gap-2">
+            <Button onClick={()=>{
+              const g=(x:number,y:number,z:number)=>evalFnFromExpr(functionExpr)(x,y)*1; // f(x,y) extendida constante en z
+              const val=tripleIntegral(g, ax,bx, cy,dy, zMin,zMax, Math.max(4,nx), Math.max(4,ny), Math.max(4,ny));
+              setResult(val);
+            }}>Calcular</Button>
+            <div className="text-sm text-gray-300">Resultado: <span className="font-mono">{result!==null?result.toPrecision(8):"—"}</span></div>
+          </div>
+        </TabsContent>
+      </Tabs>
+    </Card>
   );
 }
