@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,15 @@ import { create, all } from "mathjs";
 import { numericHessian, classify } from "../lib/hessian";
 
 const math = create(all, { number: "number" });
+
+// Compila de forma segura; devuelve null si hay error de sintaxis
+function safeCompile(expr: string) {
+  try {
+    return math.compile(expr);
+  } catch {
+    return null;
+  }
+}
 
 export type Candidate = { x: number; y: number; f: number; lambda: number };
 
@@ -24,32 +33,33 @@ export default function OptimizationCalculator({
   const [constraint, setConstraint] = useState("x^2 + y^2 - 4");
   const [results, setResults] = useState<{ criticalPoints: Array<Candidate> } | null>(null);
 
-  // -------- Compilación segura --------
+  // Recompilar al cambiar f o g
   const compiled = useMemo(() => {
-    try {
-      return {
-        f: math.compile(functionExpr || "x^2 + y^2"),
-        g: math.compile(constraint),
-      };
-    } catch {
-      return null;
-    }
+    const f = safeCompile(functionExpr || "x^2 + y^2");
+    const g = safeCompile(constraint);
+    return f && g ? { f, g } : null;
   }, [functionExpr, constraint]);
 
+  // Limpiar resultados cuando cambie f o g
+  useEffect(() => {
+    setResults(null);
+    onCandidatesChange?.([]);
+  }, [functionExpr, constraint]);
+
+  // Evaluadores robustos
   const feval = (x: number, y: number) => {
     if (!compiled) return NaN;
     try {
-      const v = compiled.f.evaluate({ x, y, e: Math.E, pi: Math.PI });
+      const v = compiled.f.evaluate({ x, y, pi: Math.PI, e: Math.E });
       return Number.isFinite(v) ? Number(v) : NaN;
     } catch {
       return NaN;
     }
   };
-
   const geval = (x: number, y: number) => {
     if (!compiled) return NaN;
     try {
-      const v = compiled.g.evaluate({ x, y, e: Math.E, pi: Math.PI });
+      const v = compiled.g.evaluate({ x, y, pi: Math.PI, e: Math.E });
       return Number.isFinite(v) ? Number(v) : NaN;
     } catch {
       return NaN;
@@ -181,9 +191,13 @@ export default function OptimizationCalculator({
 
   // -------- Ejecutar búsqueda completa --------
   const optimize = () => {
-    try {
-      if (!compiled) return;
+    if (!compiled) {
+      setResults({ criticalPoints: [] });
+      onCandidatesChange?.([]);
+      return;
+    }
 
+    try {
       const seeds = generateSeeds();
       const found: Candidate[] = [];
       const seen: { x: number; y: number }[] = [];

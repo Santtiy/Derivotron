@@ -76,10 +76,20 @@ export function CalculatorLayout() {
                   <OptimizationCalculatorWithCandidates functionExpr={functionExpr} onCandidates={setOptPoints} />
                 </TabsContent>
                 <TabsContent value="integration">
-                  <IntegrationCalculator functionExpr={functionExpr} onRegionChange={(r)=>setRegionRect(r)} />
+                  <IntegrationCalculator
+                    functionExpr={functionExpr}
+                    onRegionChange={(r)=>setRegionRect(r)}
+                    onRegionTypeI={(cfg)=>setRegionTypeI(cfg)}
+                    onRegionTypeII={(cfg)=>setRegionTypeII(cfg)}
+                    onRegionPolar={(cfg)=>setRegionPolar(cfg)}
+                  />
                 </TabsContent>
                 <TabsContent value="limits">
-                  <LimitsCalculator functionExpr={functionExpr} onPointChange={(p)=>setLimitPoint(p)} />
+                  <LimitsCalculator
+                    functionExpr={functionExpr}
+                    onPointChange={(p)=>setLimitPoint(p)}
+                    onPathsChange={(paths)=>setPathsLimits(paths)}
+                  />
                 </TabsContent>
               </div>
             </Tabs>

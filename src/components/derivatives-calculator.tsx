@@ -13,29 +13,35 @@ import { trySymbolicDerivatives, tangentPlaneAt } from "../lib/symbolic";
 const math = create(all);
 
 interface Props {
-  functionExpr?: string;
+  functionExpr: string;
   onPointChange?: (p: { x: number; y: number } | null) => void;
 }
 
-export default function DerivativesCalculator({
-  functionExpr,
-  onPointChange, // NUEVO
-}: { functionExpr: string; onPointChange?: (p:{x:number;y:number}|null)=>void }) {
-  const [x0,setX0] = useState(0);
-  const [y0,setY0] = useState(0);
-  const [expr, setExpr] = useState<string>(functionExpr);
-  const [rawPoint, setRawPoint] = useState<string>(`${x0},${y0}`);
-  const [point, setPoint] = useState<{ x: number; y: number }>({ x:x0, y:y0 });
+export default function DerivativesCalculator({ functionExpr, onPointChange }: Props) {
+  const [expr, setExpr] = useState<string>(functionExpr ?? "");
+  const [rawPoint, setRawPoint] = useState<string>("0,0");
+  const [point, setPoint] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [forceRecalc, setForceRecalc] = useState(0);
 
-  // Parse punto "a,b"
-  useMemo(() => {
+  // Mantener expr sincronizada con la función global
+  useEffect(() => {
+    setExpr(functionExpr ?? "");
+  }, [functionExpr]);
+
+  // Parsear “x,y” a objeto punto y emitir al 3D
+  useEffect(() => {
     const parts = rawPoint.split(/[,;\s]+/).filter(Boolean);
-    const x = parseFloat(parts[0]);
-    const y = parseFloat(parts[1]);
-    if (Number.isFinite(x) && Number.isFinite(y)) setPoint({ x, y });
-  }, [rawPoint]);
+    const x = Number(parts[0]);
+    const y = Number(parts[1]);
+    if (Number.isFinite(x) && Number.isFinite(y)) {
+      const p = { x, y };
+      setPoint(p);
+      onPointChange?.(p);
+    } else {
+      onPointChange?.(null);
+    }
+  }, [rawPoint, onPointChange]);
 
   const compiled = useMemo(() => {
     try {
@@ -86,11 +92,9 @@ export default function DerivativesCalculator({
     setForceRecalc((c) => c + 1);
   };
 
-  useEffect(()=>{ onPointChange?.({x:x0,y:y0}); },[x0,y0, onPointChange]); // emite cambios
-
   const handleRecalc = () => {
     setForceRecalc((c) => c + 1);
-    onPointChange?.({ x: x0, y: y0 });
+    onPointChange?.(point); // vuelve a emitir el punto actual
   };
 
   return (
@@ -114,59 +118,35 @@ export default function DerivativesCalculator({
             )}
           </div>
 
-            <div>
-              <Label>Punto (x0,y0)</Label>
-              <Input
-                value={rawPoint}
-                onChange={(e) => setRawPoint(e.target.value)}
-                placeholder="Ej: 1,2"
-              />
-            </div>
+          <div>
+            <Label>Punto (x0,y0)</Label>
+            <Input
+              value={rawPoint}
+              onChange={(e) => setRawPoint(e.target.value)}
+              placeholder="Ej: 1,2"
+            />
+          </div>
 
           <div className="flex flex-wrap gap-2 text-xs">
-            <Button
-              variant="outline"
-              onClick={() => applyPreset("x^2 + y^2")}
-              className="h-7 px-2"
-            >
+            <Button variant="outline" onClick={() => applyPreset("x^2 + y^2")} className="h-7 px-2">
               x²+y²
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => applyPreset("sin(x)*cos(y)")}
-              className="h-7 px-2"
-            >
+            <Button variant="outline" onClick={() => applyPreset("sin(x)*cos(y)")} className="h-7 px-2">
               sin(x)cos(y)
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => applyPreset("exp(x*y)")}
-              className="h-7 px-2"
-            >
+            <Button variant="outline" onClick={() => applyPreset("exp(x*y)")} className="h-7 px-2">
               {"e^{xy}"}
             </Button>
-            <Button
-              variant="outline"
-              onClick={() => applyPreset("1/(x^2 + y^2)")}
-              className="h-7 px-2"
-            >
+            <Button variant="outline" onClick={() => applyPreset("1/(x^2 + y^2)")} className="h-7 px-2">
               1/(x²+y²)
             </Button>
           </div>
 
           <div className="flex items-center gap-2">
-            <Button
-              onClick={handleRecalc}
-              disabled={hasError}
-              className="h-8"
-            >
+            <Button onClick={handleRecalc} disabled={hasError} className="h-8">
               Recalcular
             </Button>
-            <Button
-              variant="ghost"
-              onClick={() => setShowAdvanced((s) => !s)}
-              className="h-8 text-xs"
-            >
+            <Button variant="ghost" onClick={() => setShowAdvanced((s) => !s)} className="h-8 text-xs">
               {showAdvanced ? "Ocultar avanzado" : "Mostrar avanzado"}
             </Button>
           </div>
@@ -196,18 +176,13 @@ export default function DerivativesCalculator({
         </div>
 
         <div className="text-xs text-gray-400 mt-3">
-          Punto:{" "}
-          <span className="font-mono">
-            ({point.x.toPrecision(3)}, {point.y.toPrecision(3)})
-          </span>
+          Punto: <span className="font-mono">({point.x.toPrecision(3)}, {point.y.toPrecision(3)})</span>
         </div>
 
         <div className="mt-3 text-xs text-gray-400">
           Rango (≈):{" "}
-          {scan.range
-            ? `${scan.range.min.toPrecision(4)} a ${scan.range.max.toPrecision(4)}`
-            : "—"}{" "}
-          · Inválidos: {scan.invalidPoints}/{scan.total} ({invalidPct}%)
+          {scan.range ? `${scan.range.min.toPrecision(4)} a ${scan.range.max.toPrecision(4)}` : "—"} ·
+          Inválidos: {scan.invalidPoints}/{scan.total} ({invalidPct}%)
         </div>
 
         {showAdvanced && (
@@ -215,21 +190,14 @@ export default function DerivativesCalculator({
             <div className="font-semibold text-blue-300">Avanzado</div>
             <div>
               Derivadas simbólicas:{" "}
-              {symbolic ? (
-                <span className="font-mono">
-                  fx={symbolic.dx} · fy={symbolic.dy}
-                </span>
-              ) : (
-                "No disponible"
-              )}
+              {symbolic ? <span className="font-mono">fx={symbolic.dx} · fy={symbolic.dy}</span> : "No disponible"}
             </div>
             <div>
               Plano tangente:{" "}
               {plane ? (
                 <span className="font-mono">
-                  z ≈ {plane.z0.toPrecision(4)} + {plane.a.toPrecision(4)}(x-
-                  {point.x.toPrecision(3)}) + {plane.b.toPrecision(4)}(y-
-                  {point.y.toPrecision(3)})
+                  z ≈ {plane.z0.toPrecision(4)} + {plane.a.toPrecision(4)}(x-{point.x.toPrecision(3)}) +{" "}
+                  {plane.b.toPrecision(4)}(y-{point.y.toPrecision(3)})
                 </span>
               ) : (
                 "—"
