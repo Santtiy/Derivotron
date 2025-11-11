@@ -22,12 +22,11 @@ interface Props {
 }
 
 function compileSafe(expr: string) {
+  try {
     return compile(expr);
-    try {
-      return compile(expr);
-    } catch {
-      return null;
-    }
+  } catch {
+    return null;
+  }
 }
 function makeEval(expr: string) {
   const c = compileSafe(expr);
