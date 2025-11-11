@@ -1,27 +1,41 @@
 "use client";
 
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
 import { create, all } from "mathjs";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
 import { gradientAt } from "../lib/derivatives";
 import { analyzeDomainAndRange } from "../lib/domain-range";
+import { trySymbolicDerivatives, tangentPlaneAt } from "../lib/symbolic";
 
 const math = create(all);
 
-/* ===========================================================
-   COMPONENTE PRINCIPAL: DerivativesCalculator
-   =========================================================== */
-export default function DerivativesCalculator({
-  functionExpr = "x^2 + y^2",
-  initialPoint = { x: 0, y: 0 },
-}: {
+interface Props {
   functionExpr?: string;
-  initialPoint?: { x: number; y: number };
-}) {
+  onPointChange?: (p: { x: number; y: number } | null) => void;
+}
+
+export default function DerivativesCalculator({
+  functionExpr,
+  onPointChange, // NUEVO
+}: { functionExpr: string; onPointChange?: (p:{x:number;y:number}|null)=>void }) {
+  const [x0,setX0] = useState(0);
+  const [y0,setY0] = useState(0);
   const [expr, setExpr] = useState<string>(functionExpr);
-  const [point, setPoint] = useState<{ x: number; y: number }>(initialPoint);
+  const [rawPoint, setRawPoint] = useState<string>(`${x0},${y0}`);
+  const [point, setPoint] = useState<{ x: number; y: number }>({ x:x0, y:y0 });
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [forceRecalc, setForceRecalc] = useState(0);
+
+  // Parse punto "a,b"
+  useMemo(() => {
+    const parts = rawPoint.split(/[,;\s]+/).filter(Boolean);
+    const x = parseFloat(parts[0]);
+    const y = parseFloat(parts[1]);
+    if (Number.isFinite(x) && Number.isFinite(y)) setPoint({ x, y });
+  }, [rawPoint]);
 
   const compiled = useMemo(() => {
     try {
@@ -29,11 +43,17 @@ export default function DerivativesCalculator({
     } catch {
       return null;
     }
-  }, [expr]);
+  }, [expr, forceRecalc]);
 
   const evalFn = useMemo(() => {
     if (!compiled) return null;
-    return (x: number, y: number) => Number(compiled.evaluate({ x, y }));
+    return (x: number, y: number) => {
+      try {
+        return Number(compiled.evaluate({ x, y }));
+      } catch {
+        return NaN;
+      }
+    };
   }, [compiled]);
 
   const gradient = useMemo(() => {
@@ -41,18 +61,42 @@ export default function DerivativesCalculator({
     return gradientAt(evalFn, point.x, point.y);
   }, [evalFn, point]);
 
+  const symbolic = useMemo(() => trySymbolicDerivatives(expr), [expr]);
+
+  const plane = useMemo(() => {
+    if (!evalFn || !gradient) return null;
+    return tangentPlaneAt(evalFn, gradient, point.x, point.y);
+  }, [evalFn, gradient, point]);
+
   const scan = useMemo(
-    () => evalFn ? analyzeDomainAndRange(evalFn, -5, 5, -5, 5, 50, 50) : { range: null, invalidPoints: 0, total: 0 },
+    () =>
+      evalFn
+        ? analyzeDomainAndRange(evalFn, -5, 5, -5, 5, 40, 40)
+        : { range: null, invalidPoints: 0, total: 0 },
     [evalFn]
   );
 
+  const invalidPct =
+    scan.total > 0 ? ((scan.invalidPoints / scan.total) * 100).toFixed(1) : "0.0";
+
+  const hasError = !compiled;
+
+  const applyPreset = (p: string) => {
+    setExpr(p);
+    setForceRecalc((c) => c + 1);
+  };
+
+  useEffect(()=>{ onPointChange?.({x:x0,y:y0}); },[x0,y0, onPointChange]); // emite cambios
+
+  const handleRecalc = () => {
+    setForceRecalc((c) => c + 1);
+    onPointChange?.({ x: x0, y: y0 });
+  };
+
   return (
-    <div className="space-y-6">
-      {/* Panel principal para ingresar f y punto */}
+    <div className="space-y-5">
       <Card className="p-4 bg-gray-900 border-gray-800 rounded-lg">
-        <h2 className="text-lg font-semibold text-blue-400 mb-4">
-          Derivadas Parciales / Gradiente
-        </h2>
+        <h2 className="text-lg font-semibold text-blue-400 mb-4">Derivadas / Gradiente</h2>
 
         <div className="grid gap-3">
           <div>
@@ -60,36 +104,75 @@ export default function DerivativesCalculator({
             <Input
               value={expr}
               onChange={(e) => setExpr(e.target.value)}
+              className={hasError ? "border-red-500" : ""}
               placeholder="Ej: x^2 + y^2"
             />
+            {hasError && (
+              <div className="text-xs text-red-400 mt-1">
+                Expresión inválida. Revisa sintaxis.
+              </div>
+            )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
             <div>
-              <Label>x₀</Label>
+              <Label>Punto (x0,y0)</Label>
               <Input
-                type="number"
-                value={point.x}
-                onChange={(e) =>
-                  setPoint((p) => ({ ...p, x: parseFloat(e.target.value) }))
-                }
+                value={rawPoint}
+                onChange={(e) => setRawPoint(e.target.value)}
+                placeholder="Ej: 1,2"
               />
             </div>
-            <div>
-              <Label>y₀</Label>
-              <Input
-                type="number"
-                value={point.y}
-                onChange={(e) =>
-                  setPoint((p) => ({ ...p, y: parseFloat(e.target.value) }))
-                }
-              />
-            </div>
+
+          <div className="flex flex-wrap gap-2 text-xs">
+            <Button
+              variant="outline"
+              onClick={() => applyPreset("x^2 + y^2")}
+              className="h-7 px-2"
+            >
+              x²+y²
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => applyPreset("sin(x)*cos(y)")}
+              className="h-7 px-2"
+            >
+              sin(x)cos(y)
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => applyPreset("exp(x*y)")}
+              className="h-7 px-2"
+            >
+              {"e^{xy}"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => applyPreset("1/(x^2 + y^2)")}
+              className="h-7 px-2"
+            >
+              1/(x²+y²)
+            </Button>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={handleRecalc}
+              disabled={hasError}
+              className="h-8"
+            >
+              Recalcular
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => setShowAdvanced((s) => !s)}
+              className="h-8 text-xs"
+            >
+              {showAdvanced ? "Ocultar avanzado" : "Mostrar avanzado"}
+            </Button>
           </div>
         </div>
       </Card>
 
-      {/* Panel de resultados del gradiente */}
       <Card className="p-4 bg-gray-900 border-gray-800 rounded-lg">
         <div className="grid grid-cols-3 gap-4">
           <div>
@@ -113,16 +196,47 @@ export default function DerivativesCalculator({
         </div>
 
         <div className="text-xs text-gray-400 mt-3">
-          Evaluado en:{" "}
+          Punto:{" "}
           <span className="font-mono">
             ({point.x.toPrecision(3)}, {point.y.toPrecision(3)})
           </span>
         </div>
 
-        <div className="mt-4 text-xs text-gray-400">
-          Rango estimado (malla 50x50): {scan.range ? `${scan.range.min.toPrecision(4)} a ${scan.range.max.toPrecision(4)}` : "—"} ·
-          Puntos inválidos: {scan.invalidPoints}/{scan.total}
+        <div className="mt-3 text-xs text-gray-400">
+          Rango (≈):{" "}
+          {scan.range
+            ? `${scan.range.min.toPrecision(4)} a ${scan.range.max.toPrecision(4)}`
+            : "—"}{" "}
+          · Inválidos: {scan.invalidPoints}/{scan.total} ({invalidPct}%)
         </div>
+
+        {showAdvanced && (
+          <div className="mt-4 space-y-2 border-t border-gray-800 pt-3 text-xs text-gray-300">
+            <div className="font-semibold text-blue-300">Avanzado</div>
+            <div>
+              Derivadas simbólicas:{" "}
+              {symbolic ? (
+                <span className="font-mono">
+                  fx={symbolic.dx} · fy={symbolic.dy}
+                </span>
+              ) : (
+                "No disponible"
+              )}
+            </div>
+            <div>
+              Plano tangente:{" "}
+              {plane ? (
+                <span className="font-mono">
+                  z ≈ {plane.z0.toPrecision(4)} + {plane.a.toPrecision(4)}(x-
+                  {point.x.toPrecision(3)}) + {plane.b.toPrecision(4)}(y-
+                  {point.y.toPrecision(3)})
+                </span>
+              ) : (
+                "—"
+              )}
+            </div>
+          </div>
+        )}
       </Card>
     </div>
   );

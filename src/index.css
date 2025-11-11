@@ -1,6 +1,12 @@
+/* ...existing code... */
 @import "tailwindcss/base";
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
+
+/* evita la barra horizontal en toda la app */
+html, body {
+  overflow-x: hidden; /* evita la barra horizontal */
+}
 
 html, body, #root {
   height: 100%;
