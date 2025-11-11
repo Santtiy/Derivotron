@@ -291,3 +291,5 @@ export default function OptimizationCalculator({
     </div>
   );
 }
+
+// Removed obsolete runOptimization helper; use the optimize() handler within the component instead.

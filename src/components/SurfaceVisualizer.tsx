@@ -7,11 +7,24 @@ import type { Candidate } from "@/components/optimization-calculator";
 interface Props {
   functionExpr: string;
   point?: { x: number; y: number };
-  candidates?: Candidate[];     // <-- NUEVO
-  showCandidates?: boolean;     // <-- NUEVO
+  candidates?: Candidate[];
+  regionRect?: { ax: number; bx: number; cy: number; dy: number } | null;
+  zRange?: { zmin: number; zmax: number } | null;
+  // NUEVO:
+  limitPaths?: { label: string; points: { x: number; y: number }[] }[];
+  regionTypeI?: { xMin: number; xMax: number; y1: (x: number)=>number; y2: (x: number)=>number } | null;
+  regionTypeII?: { yMin: number; yMax: number; x1: (y: number)=>number; x2: (y: number)=>number } | null;
+  regionPolar?: { rMin: number; rMax: number; tMin: number; tMax: number } | null;
+  showTangent?: boolean;
+  showGradient?: boolean;
 }
 
-export function SurfaceVisualizer({ functionExpr, point, candidates = [], showCandidates = true }: Props) {
+export function SurfaceVisualizer({
+  functionExpr, point, candidates = [],
+  regionRect = null, zRange = null,
+  limitPaths = [], regionTypeI = null, regionTypeII = null, regionPolar = null,
+  showTangent = false, showGradient = false
+}: Props) {
   const xValues = Array.from({ length: 40 }, (_, i) => -5 + i * 0.25);
   const yValues = Array.from({ length: 40 }, (_, i) => -5 + i * 0.25);
 
@@ -61,6 +74,7 @@ export function SurfaceVisualizer({ functionExpr, point, candidates = [], showCa
         ]
       : [];
 
+  // Plano z=0
   const zZeroPlane = [
     {
       z: Array(xValues.length).fill(Array(yValues.length).fill(0)),
@@ -75,6 +89,34 @@ export function SurfaceVisualizer({ functionExpr, point, candidates = [], showCa
       opacity: 0.3,
       name: "Plano z=0",
     },
+  ];
+
+  // NUEVO: planos del rango (zmin/zmax)
+  const rangePlanes: any[] = !zRange ? [] : [
+    {
+      z: Array(xValues.length).fill(Array(yValues.length).fill(zRange.zmin)),
+      x: xValues, y: yValues, type: "surface",
+      colorscale: [[0, "rgba(255,0,0,0.15)"], [1, "rgba(255,0,0,0.15)"]],
+      showscale: false, opacity: 0.25, name: "z min (rango)"
+    },
+    {
+      z: Array(xValues.length).fill(Array(yValues.length).fill(zRange.zmax)),
+      x: xValues, y: yValues, type: "surface",
+      colorscale: [[0, "rgba(0,150,255,0.15)"], [1, "rgba(0,150,255,0.15)"]],
+      showscale: false, opacity: 0.25, name: "z max (rango)"
+    }
+  ];
+
+  // NUEVO: región rectangular de integración sombreada (en z=0)
+  const regionTrace: any[] = !regionRect ? [] : [
+    {
+      type: "mesh3d",
+      x: [regionRect.ax, regionRect.bx, regionRect.bx, regionRect.ax],
+      y: [regionRect.cy, regionRect.cy, regionRect.dy, regionRect.dy],
+      z: [0, 0, 0, 0],
+      color: "rgba(255,215,0,0.35)",
+      name: "Región de integración", showscale: false
+    }
   ];
 
   // ===== Plano tangente y gradiente en el punto =====
@@ -124,7 +166,7 @@ export function SurfaceVisualizer({ functionExpr, point, candidates = [], showCa
       patchZ.push(rowZ);
     }
 
-    tangentPlaneTrace = [
+    tangentPlaneTrace = showTangent ? [
       {
         type: "surface",
         x: patchX,
@@ -134,10 +176,10 @@ export function SurfaceVisualizer({ functionExpr, point, candidates = [], showCa
         showscale: false,
         name: "Plano tangente",
       },
-    ];
+    ] : [];
 
     const norm = Math.hypot(fx, fy);
-    if (isFinite(norm) && norm > 0) {
+    if (showGradient && isFinite(norm) && norm > 0) {
       const len = half * 0.7;
       const dx = (fx / norm) * len;
       const dy = (fy / norm) * len;
@@ -159,12 +201,14 @@ export function SurfaceVisualizer({ functionExpr, point, candidates = [], showCa
           name: "∇f (ascenso)",
         },
       ];
+    } else {
+      gradientArrowTrace = [];
     }
   }
 
   // ===== NUEVO: marcadores de candidatos de optimización =====
   let candidatesTrace: any[] = [];
-  if (showCandidates && candidates && candidates.length > 0) {
+  if (candidates && candidates.length > 0) {
     const xs = candidates.map((c) => c.x);
     const ys = candidates.map((c) => c.y);
     const zs = candidates.map((c) => {
@@ -201,66 +245,144 @@ export function SurfaceVisualizer({ functionExpr, point, candidates = [], showCa
     ];
   }
 
-  return (
-    <div className="w-full h-[500px] bg-gray-900 rounded-lg">
-      <Plot
-        data={
-          [
-            {
-              z: zValues,
-              x: xValues,
-              y: yValues,
-              type: "surface",
-              colorscale: "Viridis",
-              showscale: true,
-              name: "Superficie",
-            },
-            ...zZeroPlane,
-            ...(pointZ !== null
-              ? [
-                  {
-                    type: "scatter3d",
-                    mode: "markers+text",
-                    x: [point!.x],
-                    y: [point!.y],
-                    z: [pointZ],
-                    text: [
-                      `(${point!.x.toFixed(2)}, ${point!.y.toFixed(2)}, ${pointZ.toFixed(2)})`,
-                    ],
-                    textposition: "top center",
-                    marker: {
-                      color: pointColor,
-                      size: 7,
-                      symbol: "circle",
-                      line: { width: 1, color: "#fff" },
-                      opacity: 0.9,
-                    },
-                    name: "Punto evaluado",
-                  },
-                ]
-              : []),
-            ...projectionLine,
-            ...tangentPlaneTrace,
-            ...gradientArrowTrace,
-            ...candidatesTrace, // <-- NUEVO
-          ] as any
-        }
-        layout={
+  const data: any[] = [
+    {
+      z: zValues, x: xValues, y: yValues,
+      type: "surface", colorscale: "Viridis", showscale: true, name: "Superficie",
+    },
+    ...zZeroPlane,
+    ...rangePlanes,
+    ...(pointZ !== null
+      ? [
           {
-            autosize: true,
-            paper_bgcolor: "rgba(0,0,0,0)",
-            plot_bgcolor: "rgba(0,0,0,0)",
-            scene: {
-              xaxis: { title: "x", color: "white" },
-              yaxis: { title: "y", color: "white" },
-              zaxis: { title: "z", color: "white" },
-              aspectmode: "cube",
+            type: "scatter3d",
+            mode: "markers+text",
+            x: [point!.x],
+            y: [point!.y],
+            z: [pointZ],
+            text: [`(${point!.x.toFixed(2)}, ${point!.y.toFixed(2)}, ${pointZ.toFixed(2)})`],
+            textposition: "top center",
+            marker: {
+              color: pointColor,
+              size: 7,
+              symbol: "circle",
+              line: { width: 1, color: "#fff" },
+              opacity: 0.9,
             },
-            margin: { l: 0, r: 0, t: 0, b: 0 },
-          } as any
-        }
-        config={{ displayModeBar: false, responsive: true }}
-        style={{ width: "100%", height: "100%" }}
+            name: "Punto evaluado",
+          },
+        ]
+      : []),
+    ...projectionLine,
+    ...tangentPlaneTrace,
+    ...gradientArrowTrace,
+    ...candidatesTrace,
+    ...regionTrace,
+  ];
+
+  // NUEVO: trazas para regiones especiales
+  function buildTypeIOutline(cfg: Props["regionTypeI"], steps=80) {
+    if(!cfg) return [];
+    const { xMin,xMax,y1,y2 } = cfg;
+    const xs = Array.from({length:steps},(_,i)=> xMin + (xMax-xMin)*i/(steps-1));
+    const top = xs.map(x=>({x, y: y2(x)}));
+    const bottom = [...xs].reverse().map(x=>({x, y: y1(x)}));
+    const loop = [...top, ...bottom];
+    return [{
+      type:"scatter3d",
+      mode:"lines",
+      x: loop.map(p=>p.x),
+      y: loop.map(p=>p.y),
+      z: loop.map(()=>0),
+      line:{color:"#f59e0b", width:3},
+      name:"Región Tipo I"
+    }];
+  }
+
+  function buildTypeIIOutline(cfg: Props["regionTypeII"], steps=80){
+    if(!cfg) return [];
+    const { yMin,yMax,x1,x2 } = cfg;
+    const ys = Array.from({length:steps},(_,i)=> yMin + (yMax-yMin)*i/(steps-1));
+    const right = ys.map(y=>({y, x: x2(y)}));
+    const left = [...ys].reverse().map(y=>({y, x: x1(y)}));
+    const loop = [...right, ...left];
+    return [{
+      type:"scatter3d",
+      mode:"lines",
+      x: loop.map(p=>p.x),
+      y: loop.map(p=>p.y),
+      z: loop.map(()=>0),
+      line:{color:"#10b981", width:3},
+      name:"Región Tipo II"
+    }];
+  }
+
+  function buildPolarSector(cfg: Props["regionPolar"], stepsR=40, stepsT=80){
+    if(!cfg) return [];
+    const { rMin,rMax,tMin,tMax } = cfg;
+    const pts: {x:number;y:number}[] = [];
+    for(let i=0;i<stepsT;i++){
+      const t = tMin + (tMax-tMin)*i/(stepsT-1);
+      pts.push({x:rMax*Math.cos(t), y:rMax*Math.sin(t)});
+    }
+    for(let i=stepsT-1;i>=0;i--){
+      const t = tMin + (tMax-tMin)*i/(stepsT-1);
+      pts.push({x:rMin*Math.cos(t), y:rMin*Math.sin(t)});
+    }
+    return [{
+      type:"scatter3d",
+      mode:"lines",
+      x: pts.map(p=>p.x),
+      y: pts.map(p=>p.y),
+      z: pts.map(()=>0),
+      line:{color:"#6366f1", width:3},
+      name:"Sector polar"
+    }];
+  }
+
+  // NUEVO: rutas límites
+  function buildLimitPaths(paths: Props["limitPaths"]){
+    if(!paths || !paths.length) return [];
+    return paths.map(p=>({
+      type:"scatter3d",
+      mode:"lines",
+      x: p.points.map(pt=>pt.x),
+      y: p.points.map(pt=>pt.y),
+      z: p.points.map(()=>0),
+      line:{width:2},
+      name:`Ruta ${p.label}`
+    }));
+  }
+
+  // Dentro del render, añadir:
+  const typeITrace = buildTypeIOutline(regionTypeI);
+  const typeIITrace = buildTypeIIOutline(regionTypeII);
+  const polarTrace = buildPolarSector(regionPolar);
+  const limitPathTraces = buildLimitPaths(limitPaths);
+
+  // Al final agregar outlines y rutas:
+  data.push(...typeITrace, ...typeIITrace, ...polarTrace, ...limitPathTraces);
+
+  return (
+    <div className="w-full max-w-full overflow-hidden">
+      <Plot
+        data={data}
+        layout={{
+          autosize: true,
+          paper_bgcolor: "rgba(0,0,0,0)",
+          plot_bgcolor: "rgba(0,0,0,0)",
+          scene: {
+            xaxis: { title: "x", color: "white" },
+            yaxis: { title: "y", color: "white" },
+            zaxis: { title: "z", color: "white" },
+            aspectmode: "cube",
+          },
+          margin: { l: 0, r: 0, t: 40, b: 0 },
+        } as any}
+        style={{ width: "100%", height: 520 }}
+        useResizeHandler
+        className="rounded-lg"
+        config={{ displaylogo: false, responsive: true }}
       />
     </div>
   );

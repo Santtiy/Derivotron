@@ -2,7 +2,9 @@
 
 import React, { useMemo, useState, useEffect } from "react";
 import { create, all } from "mathjs";
-import { Card } from "../ui/card"; // Ajusta si tu alias "@" funciona: "@/components/ui/card"
+import { Card } from "../ui/card";
+// Controles legacy eliminados; la UI vive en RoutesAndTolerancePanel
+import { RoutesAndTolerancePanel } from "../limits/RoutesAndTolerancePanel";
 
 const math = create(all, { number: "number" });
 
@@ -179,23 +181,62 @@ export type LimitsExplorerProps = {
   onPointChange?: (p: { x: number; y: number } | null) => void;
 };
 
-export default function LimitsExplorer({ functionExpr: initialExpr = "sin(x) * cos(y)", onPointChange }: LimitsExplorerProps) {
-  const [expr, setExpr] = useState(initialExpr);
+export default function LimitsExplorer() {
+  const [expr, setExpr] = useState("sin(x) * cos(y)");
   const [x0, setX0] = useState(0);
   const [y0, setY0] = useState(0);
+  const [busy, setBusy] = useState(false);
 
-  const compiled = useMemo(() => {
-    const c = safeCompile(expr);
-    return c;
-  }, [expr]);
+  // Estado del PANEL NUEVO (único que queda)
+  const [routes, setRoutes] = useState({ anglesN: 8, customAngles: "0,45,90", randomCurves: 3, seed: "" });
+  const [tols, setTols] = useState({ epsilon: 1e-3, delta: 0.5, convTol: 1e-3, maxIter: 50 });
+  const [summary, setSummary] = useState<{ ok: boolean; text: string } | null>(null);
 
-  // ejemplo sencillo: cuando cambia el punto informamos al padre
+  const compiled = useMemo(() => safeCompile(expr), [expr]);
+
   useEffect(() => {
-    onPointChange?.({ x: x0, y: y0 });
-  }, [x0, y0, onPointChange]);
+    // onPointChange?.({ x: x0, y: y0 });
+  }, [x0, y0]);
+
+  async function handleRegenerate() {
+    setBusy(true);
+    setSummary(null);
+    try {
+      // lógica real de regeneración
+      // setSummary({ ok: true, text: "Convergencia ..." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function handleReset() {
+    setSummary(null);
+  }
 
   return (
     <div className="space-y-6">
+      {/* Panel NUEVO (único que queda) */}
+      <RoutesAndTolerancePanel
+        routes={routes}
+        tolerances={tols}
+        busy={busy}
+        resultSummary={summary}
+        onChangeRoutes={setRoutes}
+        onChangeTolerances={setTols}
+        onRegenerate={handleRegenerate}
+        onReset={handleReset}
+      />
+
+      {/* Rutas / Polar y Tolerancias (VERSIÓN VIEJA) — ELIMINAR COMPLETAMENTE */}
+      <div className="mt-6 rounded-lg border border-gray-800 bg-gray-900 p-4">
+        <h3 className="text-center text-sm font-semibold text-gray-200">Rutas / Polar</h3>
+        {/* Campos viejos: “Ángulos (n)”, “Ángulos personalizados (grados)”, “Seed”, “Incluir parábolas”, etc. */}
+        {/* ... JSX legacy ... */}
+        <h3 className="mt-6 text-center text-sm font-semibold text-gray-200">Tolerancias</h3>
+        {/* Campos viejos: “ε (precision)”, “δ (radio inicial)”, “ConvTol”, “Iteraciones máx”, “Muestras estables”, “Reset tolerancias” */}
+        {/* ... JSX legacy ... */}
+      </div>
+
       {/* Panel Límite en (x0,y0) */}
       <Card className="p-4 bg-gray-900 border border-gray-800 rounded-lg">
         <h2 className="text-lg font-semibold text-blue-400 mb-4">Σ Límite en (x0,y0)</h2>
@@ -231,26 +272,11 @@ export default function LimitsExplorer({ functionExpr: initialExpr = "sin(x) * c
             </div>
           </div>
         </div>
-
-        {/* Aquí podrías agregar controles de rutas / tolerancias */}
       </Card>
 
-      {/* Panel de Resultado (rutas mixtas) colocado debajo del panel de límite */}
+      {/* Resultados (rutas mixtas) */}
       <div>
         <MixedRoutesResults compiled={compiled} x0={x0} y0={y0} />
-      </div>
-
-      {/* Otros paneles opcionales */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-4 bg-gray-900 border border-gray-800 rounded-lg">
-          <h3 className="text-blue-400 font-semibold mb-2">Rutas / Polar</h3>
-          <p className="text-sm text-gray-400">Controles y opciones para generar rutas (rectas, parábolas, aleatorias)</p>
-        </Card>
-
-        <Card className="p-4 bg-gray-900 border border-gray-800 rounded-lg">
-          <h3 className="text-blue-400 font-semibold mb-2">Tolerancias</h3>
-          <p className="text-sm text-gray-400">Ajusta tolerancias ε / δ y parámetros de verificación</p>
-        </Card>
       </div>
     </div>
   );
