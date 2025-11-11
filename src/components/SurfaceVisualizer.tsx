@@ -312,6 +312,16 @@ export function SurfaceVisualizer({
     uirevision: UIREVISION_KEY,
   }), []);
 
+  useEffect(() => {
+    const handler = () => { /* relayout logic */ };
+    relayoutHandlerRef.current = handler;
+    window.addEventListener("resize", handler);
+    return () => {
+      window.removeEventListener("resize", handler);
+      relayoutHandlerRef.current = null;
+    };
+  }, []);
+
   return (
     <div className="w-full max-w-full overflow-hidden">
       <Plot

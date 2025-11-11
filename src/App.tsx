@@ -4,14 +4,13 @@ import { Toaster } from "sonner"
 
 function App() {
   return (
-    <div className="min-h-screen w-full bg-gray-950 text-gray-100">
-      {/* Tu aplicación principal */}
+    <>
+      {/* Aplicación principal */}
       <CalculatorLayout />
-
-      {/* 👇 Toaster global para notificaciones */}
-      <Toaster richColors position="top-right" />
-    </div>
-  )
+      {/* Toaster global */}
+      <Toaster />
+    </>
+  );
 }
 
 export default App

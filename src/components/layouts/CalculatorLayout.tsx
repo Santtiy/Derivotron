@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useState } from "react";
 import type { ComponentType, Dispatch, SetStateAction } from "react";
 import { evaluate } from "mathjs";
@@ -15,7 +13,7 @@ import { LimitsCalculator } from "../limits-calculator";
 
 type OptimizationCalculatorWithCandidatesProps = {
   functionExpr: string;
-  onCandidates?: Dispatch<SetStateAction<Candidate[]>>;
+  onCandidates?: (candidates: Candidate[]) => void;
 };
 
 const OptimizationCalculatorWithCandidates = OptimizationCalculator as unknown as ComponentType<OptimizationCalculatorWithCandidatesProps>;

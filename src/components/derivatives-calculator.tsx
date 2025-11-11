@@ -1,5 +1,3 @@
-"use client";
-
 import React, { useState, useMemo, useEffect } from "react";
 import { create, all } from "mathjs";
 import { Card } from "@/components/ui/card";
@@ -43,13 +41,17 @@ export default function DerivativesCalculator({ functionExpr, onPointChange }: P
     }
   }, [rawPoint, onPointChange]);
 
-  const compiled = useMemo(() => {
+  const allowedPattern = /^[0-9a-zA-Z+\-*/^().,\s]*$/;
+  function safeCompile(expr: string) {
+    if (!allowedPattern.test(expr)) return null;
     try {
       return math.compile(expr);
     } catch {
       return null;
     }
-  }, [expr, forceRecalc]);
+  }
+
+  const compiled = useMemo(() => safeCompile(expr), [expr, forceRecalc]);
 
   const evalFn = useMemo(() => {
     if (!compiled) return null;

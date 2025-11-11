@@ -1,5 +1,3 @@
-"use client";
-
 import { useState, useMemo, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -238,7 +236,6 @@ export default function OptimizationCalculator({
 
       onCandidatesChange?.(found);
     } catch (err) {
-      console.error("[optimization] error:", err);
       setResults({ criticalPoints: [] });
       onCandidatesChange?.([]);
     }

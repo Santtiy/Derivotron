@@ -1,5 +1,3 @@
-"use client";
-
 import { useMemo, useState, useEffect } from "react";
 import { create, all } from "mathjs";
 import { Card } from "../ui/card";
